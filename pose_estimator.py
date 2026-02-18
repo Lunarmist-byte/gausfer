@@ -8,7 +8,7 @@ class PoseEstimator:
     def run_colmap(self):
         '''Uses SfM to get Camera poses'''
         print("Starting Feature Extraction")
-        subprocess.run(['colamp','feature_extractor',"--database_path",os.path.join(self.output_path,"database.db"),"--image_path",self.image_path])
+        subprocess.run(['colmap','feature_extractor',"--database_path",os.path.join(self.output_path,"database.db"),"--image_path",self.image_path])
         print("Starting Exhaustive Matching")
         subprocess.run(['colmap',"exhaustive_matcher","--database_path",os.path.join(self.output_path,"database.db","--image_path",self.image_path)])
         print("Starting Mapper")

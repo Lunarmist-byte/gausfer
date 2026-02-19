@@ -82,7 +82,7 @@ Run the GaussianOptimizer to perform final densification and pruning for real-ti
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](github.com/Lunarmist-byte/gausfer/license.pdf) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/Lunarmist-byte/gausfer/blob/main/license.pdf) file for details.
 
 ## Acknowledgments
 

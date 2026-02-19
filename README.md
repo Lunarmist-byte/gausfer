@@ -55,11 +55,11 @@ PyTorch (CUDA supported)
 COLMAP installed and added to your system PATH.
 
 Installation
-
-git clone [https://github.com/your-repo/nerf-gs-hybrid.git](https://github.com/your-repo/nerf-gs-hybrid.git)
-cd nerf-gs-hybrid
+```bash
+git clone [https://github.com/Lunarmist-byte/gausfer
+cd gausfer
 pip install -r requirements.txt
-
+```
 
 
 Usage Workflow

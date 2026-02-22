@@ -1,19 +1,34 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-class NeRFNetwork(nn.Module):
-    '''FR3:A Volumetric Representation that predicts color and density'''
-    def __init__(self,d_input=3,d_filter=256):
-        super(NeRFNetwork,self).__init__()
-        self.layers=nn.ModuleList([nn.Linear(d_input,d_filter),nn.Linear(d_filter,d_input),nn.Linear(d_filter,d_filter+1)])
+class PositionalEncoding(nn.Module):
+    '''Maps 3D Coordinates to higher frequency space so MLP can learn sharp corners'''
+    def __init__(self,num_frequencies):
+        super().__init__()
+        self.num_frequencies=num_frequencies    
     def forward(self,x):
         '''Processes 3D coordinates to output scene density and RGB'''
-        h=x
-        for i,l in enumerate(self.layers):
-            h=F.relu(l(h))
-        sigma=F.relu(h[...,0])
-        rgb=torch.sigmoid(h[...,1:])
-        return rgb,sigma
-    def query_density(self,x):
-        _,sigma=self.forward(x)
-        return sigma
+        freqs=[x]
+        for i in range(self.num_frequencies):
+            freqs.append(torch.sin((2**i)*x))
+            freqs.append(torch.cos((2**i)*x))
+        return torch.cat(freqs,dim=-1)
+class RoomNeRF(nn.Module):
+    """
+    FR3:Volumetric scene Representation optimized for CUDA execution
+    Designed to process encoded 3D spatial coordinates and viewing directions
+    """
+    def __init__(self,num_freqs=10,hidden_dim=256):
+        super().__init__()
+        in_dim=3+2*3*num_freqs
+        self.encoder=PositionalEncoding(num_freqs)
+        self.network=nn.Sequential(
+            nn.Linear(in_dim,hidden_dim),nn.ReLU(),
+            nn.Linear(hidden_dim,hidden_dim),nn.ReLU(),
+            nn.Linear(hidden_dim,hidden_dim),nn.ReLU(),
+            nn.Linear(hidden_dim,hidden_dim),nn.ReLU(),
+            nn.Linear(hidden_dim,4)#Output:RGB(3)+Density(1)
+        ).cuda()
+    def forward(self,x):
+        encoded_x=self.encoder(x)
+        return self.network(encoded_x)
+    

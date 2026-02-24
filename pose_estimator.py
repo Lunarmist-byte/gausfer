@@ -30,6 +30,6 @@ class PoseEstimator:
             '--database_path',db_path,
             '--image_path',self.image_path,
             '--export_path',sparse_path
-        ]check=True)
+        ],check=True)
         return "Room camera poses and intrinsic parameters estimated successfully"
 

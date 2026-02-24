@@ -36,5 +36,46 @@ class RoomDatasetLoader:
         cam_data=self.cameras[img_data['camera_id']]
         #load and normalize
         img_path=os.path.join(self.image_dir,img_data['name'])
-        image_tensor=torch.tensor(np.array(Image.open(img_path))/255.0),dtype=torch.float32().cuda()
+        image_tensor=torch.tensor(np.array(Image.open(img_path))/255.0,dtype=torch.float32).cuda()
         #Build intrensic matrix
+        H,W=cam_data['height'],cam_data['width']
+        fx,fy,cx,cy=cam_data['params']
+        K=torch.tensor([
+            [fx,0,cx],
+            [0,fy,cy],
+            [0,0,1]
+        ],dtype=torch.float32).cuda()
+        R=qvec2rotmat(img_data['qvec'])
+        T=np.array(img_data['tvec'])
+        w2c=np.eye(4)
+        w2c[:3,:3]=R
+        w2c[:3,3]=T
+        c2w=torch.tensor(np.linalg.inv(w2c),dtype=torch.float32).cuda()
+        return image_tensor,(H,W,K,c2w)
+    def _read_cameras_text(self,path):
+        cameras={}
+        with open(path,"r") as fid:
+            for line in fid:
+                line=line.strip()
+                if line and line[0]!='#':
+                    elems=line.split()
+                    cameras[int(elems[0])]={
+                        'model':elems[1],'width':int(elems[2]),'height':int(elems[3]),'params':np.array(tuple(map(float,elems[4])))
+                    }
+        return cameras
+    def _read_images_text(self,path):
+        images=[]
+        with open(path,'r') as fid:
+            while True:
+                line=fid.readline()
+                if not line: break
+                if line and line[0]!='#':
+                    elems=line.split()
+                    images.append({
+                        'qvec':np.array(tuple(map(float,elems[1:5]))),
+                        'tvec':np.array(tuple(map(float,elems[5:8]))),
+                        'camera_id':int(elems[8]),'name':elems[9]
+                    })
+                    fid.realine()#skips points2d sparse
+        return images
+    

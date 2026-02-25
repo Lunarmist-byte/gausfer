@@ -7,7 +7,7 @@ class HybridCoOptimizer:
         self.nerf=nerf_model
         self.gaussians=gaussian_model
         self.grad_threshold=0.0002
-    def step(self,view_cam,ground_truth_image,render_func):
+    def step(self,view_cam,groungd_truth_image,render_func):
         #render the gaussians
         render_pkg=render_func(view_cam,self.gaussians)
         rendered_image=render_pkg["render"]
@@ -25,11 +25,14 @@ class HybridCoOptimizer:
                 valid_split_mask=nerf_density>5.0
 
                 if valid_split_mask.any():
-                    points_to_split=problematic_xyz[valid_split_mask]
-                    self.gaussians.densify_and_split(points_to_split)
+                    combined_mask=torch.zeros_like(high_error_mask)
+                    combined_mask[high_error_mask]=valid_split_mask
+                    
+                    self.gaussians.densify_and_split(combined_mask)
         #nerf-guided pruning
         with torch.no_grad():
             current_density=self.nerf(self.gaussians.xyz)[...,3]
             prune_mask=(self.gaussians.opacity.squeeze()<0.05)&(current_density<1.0)
-            self.gaussians.prune_points(prune_mask)
-        return loss.item()
+            if prune_mask.any():
+                self.gaussians.prune_points(prune_mask)
+

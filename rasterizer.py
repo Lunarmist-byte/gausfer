@@ -9,7 +9,7 @@ class RoomRasterizerCUDA:
         settings=GaussianRasterizationSettings(
             image_height=int(camera.H),
             image_width=int(camera.W),
-            tanfoxv=camera.tanfovx,
+            tanfovx=camera.tanfovx,
             tanfovy=camera.tanfovy,
             bg=bg_color,
             scale_modifier=1.0,
@@ -20,7 +20,7 @@ class RoomRasterizerCUDA:
             prefiltered=True,
             debug=False
         )
-        rasterizer=GaussianRasterizationSettings(raster_settings=settings)
+        rasterizer=GaussianRasterizer(raster_settings=settings)
         rendered_image,radii=rasterizer(
             means3D=gaussians.xyz,
             means2D=torch.zeros_like(gaussians.xyz,device='cuda'),

@@ -23,7 +23,7 @@ class RoomDatasetLoader:
     Fulfils FR1:Upload Multi-Views Images
     '''
     def __init__(self,colmap_dir,images_dir):
-        self.colmap_dir=self.colmap_dir
+        self.colmap_dir=colmap_dir
         self.image_dir=images_dir
         self.cameras=self._read_cameras_text(os.path.join(colmap_dir,"cameras.txt"))
         self.images=self._read_images_text(os.path.join(colmap_dir,"images.txt"))
@@ -60,7 +60,7 @@ class RoomDatasetLoader:
                 if line and line[0]!='#':
                     elems=line.split()
                     cameras[int(elems[0])]={
-                        'model':elems[1],'width':int(elems[2]),'height':int(elems[3]),'params':np.array(tuple(map(float,elems[4])))
+                        'model':elems[1],'width':int(elems[2]),'height':int(elems[3]),'params':np.array(tuple(map(float,elems[4:])))
                     }
         return cameras
     def _read_images_text(self,path):
@@ -76,6 +76,6 @@ class RoomDatasetLoader:
                         'tvec':np.array(tuple(map(float,elems[5:8]))),
                         'camera_id':int(elems[8]),'name':elems[9]
                     })
-                    fid.realine()#skips points2d sparse
+                    fid.readline()#skips points2d sparse
         return images
     

@@ -23,7 +23,7 @@ class NeRFToGaussianBridge:
             with torch.no_grad():
                 predictions=self.nerf(chunk)
                 density=predictions[...,3]
-                rgb=predictions[...,3]
+                rgb=predictions[...,:3]
             mask=density>threshold
             if mask.any():
                 extracted_xyz.append(chunk[mask])
@@ -36,7 +36,7 @@ class NeRFToGaussianBridge:
         return final_xyz,final_colors
     def _create_room_grid(self,res):
         '''Generates 3D Coordinates spanning the bounding box'''
-        x=torch.linspace(self.bbox[0][0],self.box[1][0],res)
+        x=torch.linspace(self.bbox[0][0],self.bbox[1][0],res)
         y=torch.linspace(self.bbox[0][1],self.bbox[1][1],res)
         z=torch.linspace(self.bbox[0][2],self.bbox[1][2],res)
         X,Y,Z=torch.meshgrid(x,y,z,indexing='ij')

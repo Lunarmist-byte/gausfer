@@ -7,7 +7,7 @@ class HybridCoOptimizer:
         self.nerf=nerf_model
         self.gaussians=gaussian_model
         self.grad_threshold=0.0002
-    def step(self,view_cam,groungd_truth_image,render_func):
+    def step(self,view_cam,ground_truth_image,render_func):
         #render the gaussians
         render_pkg=render_func(view_cam,self.gaussians)
         rendered_image=render_pkg["render"]

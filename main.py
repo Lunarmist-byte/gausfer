@@ -1,4 +1,7 @@
+import os
 import torch
+import torch.optim as optim
+
 from pose_estimator import PoseEstimator
 from dataset_loader import RoomDatasetLoader
 from nerf_model import RoomNeRF
@@ -7,7 +10,6 @@ from bridge_converter import NeRFToGaussianBridge
 from HybridCoOptimizer import HybridCoOptimizer
 from rasterizer import RoomRasterizerCUDA
 from gaussian_model import GaussianModel
-import torch.optim as optim
 
 class ViewCamera:
     '''Helper class to translate NeRF to 3DGS'''
@@ -17,7 +19,7 @@ class ViewCamera:
         fx,fy=K[0,0].item(),K[1,1].item()
         #Calculate field of view
         self.tanfovx=W/(2.0*fx)
-        self.tanfov=H/(2.0*fy)
+        self.tanfovy=H/(2.0*fy)
         #Rasterizer w2c
         self.w2c=torch.inverse(c2w)
         self.pos=c2w[:3,3]
@@ -36,12 +38,19 @@ class ViewCamera:
 
 def main():
     print("Starting 3D Reconstruction")
-    #Run Pose Estimation(COLMAP)
-    estimator=PoseEstimator(image_path='./images',output_path='./output')
-    estimator.run_colmap()
+    image_dir='./images'
+    output_dir='./output'
+    colmap_out=os.path.join(output_dir,'sparse')
+    #Bridging
+    if not os.path.exists(os.path.join(colmap_out,"cameras.txt")):
+        print("Fresh images, running COLMAP")
+        estimator=PoseEstimator(image_path=image_dir,output_path=output_dir)
+        estimator.run_colmap()
+    else:
+        print("Camera poses already found,skipping colmap")
     #Load dataset
-    dataset=RoomDatasetLoader(colmap_dir="./output/sparse",images_dir="./images")
-    #Initialize NeRF
+    dataset=RoomDatasetLoader(colmap_dir=colmap_out,images_dir=image_dir)
+    #Initialize NeRFrde 
     nerf=RoomNeRF().cuda()
     trainer=NeRFTrainer(nerf)
     #Pre-Train
@@ -50,7 +59,7 @@ def main():
         for i in range(len(dataset.images)):
             img,poses=dataset.get_training_batch(i)
             loss=trainer.train_step(img,poses)
-        print(f"NeRF Epoch {epoch} Loss:{loss}")
+        print(f"NeRF Epoch {epoch} Loss:{loss:.4f}")
     #Bridge
     print("Seeding Gaussians")
     bbox=[[-5,-5,-5],[5,5,5]]#example bounds
@@ -73,9 +82,9 @@ def main():
         ground_truth_image,(H,W,K,c2w)=dataset.get_training_batch(idx)
         #Wrap the NeRF matrices into Camera
         view_cam=ViewCamera(H,W,K,c2w)
-        loss=co_optimizer.step(view_cam=view_cam,ground_truth_image=ground_truth_img,render_func=rasterizer.render_room_view)
+        loss=co_optimizer.step(view_cam=view_cam,ground_truth_image=ground_truth_image,render_func=rasterizer.render_room_view)
         #Apply graident updates
-        gaussian_optim.step()
+        gaussians_optim.step()
         
         if step%100==0:
             print(f"step{step}/{num_steps}| Loss:{loss:.4f}|Splat Count:{gaussians.xyz.shape[0]}")

@@ -15,7 +15,7 @@ class NeRFToGaussianBridge:
         Samples room's volume in chunks to find solid surfaces
         '''
         print(f"Generating grid at {resolution}^3 resolution")
-        grid_coords=self._create_sample_grid(resolution).cuda()
+        grid_coords=self._create_room_grid(resolution).cuda()
         extracted_xyz=[]
         extracted_colors=[]
         for i in range(0,grid_coords.shape[0],self.chunk_size):

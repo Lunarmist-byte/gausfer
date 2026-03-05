@@ -47,7 +47,7 @@ class NeRFTrainer:
         j=j.t()
         fx,fy=K[0,0],K[1,1]
         cx,cy=K[0,2],K[1,2]
-        dirs=torch.stack([(i-cx)/fx,-(j-cy)/fy,-torch.ones_like(i,device='cuda')],dim=-1)
+        dirs=torch.stack([(i-cx)/fx,(j-cy)/fy,torch.ones_like(i,device='cuda')],dim=-1)
         rotation_matrix=c2w[:3,:3]
         rays_d=torch.sum(dirs[...,None,:]*rotation_matrix,dim=-1)
         rays_d=rays_d/torch.norm(rays_d,dim=-1,keepdim=True)

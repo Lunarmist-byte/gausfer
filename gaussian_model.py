@@ -72,7 +72,7 @@ class GaussianModel(nn.Module):
         self._features_dc=Parameter(torch.cat([self._features_dc,new_features_dc],dim=0).requires_grad_(True))
         self._scaling=Parameter(torch.cat([self._scaling,new_scaling],dim=0).requires_grad_(True))
         self._rotation=Parameter(torch.cat([self._rotation,new_rotation],dim=0).requires_grad_(True))
-        self._opacity=Parameter(torch.cat([self._opacity],new_opacity),dim=0).requires_grad_(True)
+        self._opacity=Parameter(torch.cat([self._opacity,new_opacity],dim=0).requires_grad_(True))
         return True
 
     def prune_points(self,prune_mask):
@@ -80,7 +80,7 @@ class GaussianModel(nn.Module):
         keep_mask=~prune_mask
 
         self._xyz=Parameter(self._xyz[keep_mask].requires_grad_(True))
-        self._features_dc=Parameter(self._features_dc[keep_mask]),self.requires_grad_(True)
+        self._features_dc=Parameter(self._features_dc[keep_mask].requires_grad_(True))
         self._scaling=Parameter(self._scaling[keep_mask].requires_grad_(True))
         self._rotation=Parameter(self._rotation[keep_mask].requires_grad_(True))
         self._opacity=Parameter(self._opacity[keep_mask].requires_grad_(True))

@@ -9,8 +9,6 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QProgressBar, QSlider, QSpinBox, QFileDialog, 
                              QPlainTextEdit, QMessageBox, QGroupBox)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
-
-# Import Pipeline Components
 from pose_estimator import PoseEstimator
 from dataset_loader import RoomDatasetLoader
 from nerf_model import RoomNeRF

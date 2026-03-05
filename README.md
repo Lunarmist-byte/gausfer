@@ -4,81 +4,76 @@ This repository implements a high-fidelity 3D reconstruction pipeline that bridg
 
 ## Key Features
 
-Automated Pose Estimation: Integrated COLMAP wrapper for Structure-from-Motion (SfM) to extract camera intrinsics and extrinsics.
-
-Volumetric Scene Representation: A deep MLP-based NeRF implementation for predicting density and RGB from 3D coordinates.
-
-Hybrid Transition Bridge: A sampling module that converts NeRF density fields into point clouds to initialize Gaussian Splats.
-
-Dynamic Gaussian Optimization: Adaptive densification and pruning logic to handle complex geometry and improve rendering efficiency.
+- **Automated Pose Estimation**: Integrated COLMAP wrapper for Structure-from-Motion (SfM) to extract camera intrinsics and extrinsics.
+- **Volumetric Scene Representation**: A deep MLP-based NeRF implementation for predicting density and RGB from 3D coordinates.
+- **Hybrid Transition Bridge**: A sampling module that converts NeRF density fields into point clouds to initialize Gaussian Splats.
+- **Dynamic Gaussian Optimization**: Adaptive densification and pruning logic to handle complex geometry and improve rendering efficiency.
+- **Desktop Application Interface (PyQt6)**: A multithreaded GUI (`app_ui.py`) for managing video extraction, starting the training pipeline, and viewing real-time rendering logs.
+- **Intelligent Video Extraction**: A Streamlit tool (`data_capture_app.py`) for automated frame extraction, leveraging Laplacian variance to filter out blurry frames automatically.
 
 ## Project Structure
 
 ### 1. Camera Pose Estimation (PoseEstimator)
-
 Uses COLMAP to perform feature extraction and exhaustive matching. This step is critical for recovering the camera parameters required for both NeRF training and Gaussian projection.
 
-Features: Database management, SfM mapping, and sparse reconstruction export.
-
-## 2. Neural Radiance Field (NeRFNetwork)
-
-A volumetric representation using a PyTorch-based MLP.
-
-Inputs: 5D coordinates (location $x, y, z$ and viewing direction $\theta, \phi$).
-
-Outputs: Volume density ($\sigma$) and emitted RGB color.
-
-Trainer: NeRFTrainer handles the GPU-accelerated optimization loop using ray-tracing volumetric rendering.
+### 2. Neural Radiance Field (RoomNeRF)
+A volumetric representation using a PyTorch-based MLP. Inputs: 5D coordinates (location x, y, z and viewing direction). Outputs: Volume density ($\sigma$) and emitted RGB color. Managed by `NeRFTrainer`.
 
 ### 3. NeRF-to-Gaussian Bridge (NeRFToGaussianBridge)
-
 This module implements the transition between representations. By sampling the NeRF model's density field within a defined bounding box, it identifies high-probability surfaces to serve as the "initial seeds" for 3D Gaussians.
 
-Process: Grid sampling $\rightarrow$ Density Thresholding $\rightarrow$ Color Querying $\rightarrow$ Gaussian Initialization.
+### 4. Gaussian Optimization (HybridCoOptimizer)
+Implements the "Densify and Prune" strategy to scale reconstruction to full rooms. Includes advanced rendering passes via `diff-gaussian-rasterization`.
 
-## 4. Gaussian Optimization (GaussianOptimizer)
+### 5. Desktop Controller (app_ui.py)
+A native desktop widget built with PyQt6. This acts as the primary access point for the Gausfer pipeline, running heavy PyTorch and COLMAP computations in background threads keeping the UI highly responsive.
 
-Implements the "Densify and Prune" strategy to scale reconstruction to full rooms.
-
-Densification: Splits Gaussians in areas with high positional gradients.
-
-Pruning: Removes Gaussians with opacity below a specific threshold ($\alpha < 0.01$) to maintain a clean, efficient model.
+### 6. Pipeline Feeder (data_capture_app.py)
+A Streamlit web application for users to upload room walkthrough videos and automatically curate sharp frames based on blur variance.
 
 ## Getting Started
 
 ### Prerequisites
 
 Python 3.8+
-
 PyTorch (CUDA supported)
-
 COLMAP installed and added to your system PATH.
+PyQt6 & Streamlit (for GUI tools)
 
-Installation
+### Installation
 ```bash
-git clone [https://github.com/Lunarmist-byte/gausfer
+git clone https://github.com/Lunarmist-byte/gausfer
 cd gausfer
 pip install -r requirements.txt
 ```
 
+## Usage Workflow
 
-Usage Workflow
+You can now run the full pipeline either using our new Desktop UI or the command line.
 
-Extract Poses:
+### Option A: Desktop UI (Recommended)
+Launch the integrated desktop application to manage the entire workflow via a graphical interface:
 ```bash
-estimator = PoseEstimator(image_path="./data/room", output_path="./output")
-estimator.run_colmap()
+python app_ui.py
+```
+From here you can:
+1. Extract sharp frames from a video.
+2. Monitor COLMAP extraction, NeRF warmup, Bridging, and 3DGS progression with live logs.
+
+### Option B: Command Line
+
+**1. Data Preparation:**
+Use the Streamlit app to extract frames from a video or place your images in `./images`.
+```bash
+streamlit run data_capture_app.py
 ```
 
-
-## Train NeRF:
-Initialize the NeRFNetwork and run the NeRFTrainer to learn the volumetric geometry.
-
-## Bridge & Splat:
-Use the NeRFToGaussianBridge to sample the trained NeRF and initialize your Gaussian model.
-
-## Refine:
-Run the GaussianOptimizer to perform final densification and pruning for real-time performance.
+**2. Run Pipeline:**
+Run the core pipeline end-to-end using `main.py`:
+```bash
+python main.py
+```
+This handles COLMAP extraction, NeRF training, Bridging & Splatting, and Refinement processes seamlessly in the terminal.
 
 ## License
 
@@ -86,6 +81,5 @@ This project is licensed under the MIT License - see the [LICENSE](https://githu
 
 ## Acknowledgments
 
-Original NeRF Paper (Mildenhall et al.)
-
-3D Gaussian Splatting for Real-Time Radiance Field Rendering (Kerbl et al.)
+- Original NeRF Paper (Mildenhall et al.)
+- 3D Gaussian Splatting for Real-Time Radiance Field Rendering (Kerbl et al.)

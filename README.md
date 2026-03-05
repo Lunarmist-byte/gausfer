@@ -56,7 +56,7 @@ COLMAP installed and added to your system PATH.
 
 Installation
 ```bash
-git clone [https://github.com/Lunarmist-byte/gausfer
+git clone https://github.com/Lunarmist-byte/gausfer
 cd gausfer
 pip install -r requirements.txt
 ```

@@ -36,7 +36,7 @@ class RoomDatasetLoader:
         cam_data=self.cameras[img_data['camera_id']]
         #load and normalize
         img_path=os.path.join(self.image_dir,img_data['name'])
-        image_tensor=torch.tensor(np.array(Image.open(img_path))/255.0,dtype=torch.float32).cuda()
+        image_tensor=torch.tensor(np.array(Image.open(img_path).convert('RGB'))/255.0,dtype=torch.float32).cuda()
         #Build intrensic matrix
         H,W=cam_data['height'],cam_data['width']
         fx,fy,cx,cy=cam_data['params']
@@ -69,6 +69,7 @@ class RoomDatasetLoader:
             while True:
                 line=fid.readline()
                 if not line: break
+                line = line.strip()
                 if line and line[0]!='#':
                     elems=line.split()
                     images.append({

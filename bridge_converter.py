@@ -40,7 +40,7 @@ class NeRFToGaussianBridge:
         y=torch.linspace(self.bbox[0][1],self.bbox[1][1],res)
         z=torch.linspace(self.bbox[0][2],self.bbox[1][2],res)
         X,Y,Z=torch.meshgrid(x,y,z,indexing='ij')
-        return torch.stack([X,Y,Z],dim=1).reshape(-1,3)
+        return torch.stack([X,Y,Z],dim=-1).reshape(-1,3)
     
 
         

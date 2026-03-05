@@ -109,7 +109,8 @@ class PipelineTrainingThread(QThread):
 
             # 1. Phase: COLMAP
             self.progress_colmap.emit(10)
-            if not os.path.exists(os.path.join(colmap_out, "cameras.txt")):
+            colmap_model_path = os.path.join(colmap_out, "0")
+            if not os.path.exists(os.path.join(colmap_model_path, "cameras.txt")):
                 self.log.emit("Fresh images detected. Running COLMAP...")
                 estimator = PoseEstimator(image_path=image_dir, output_path=output_dir)
                 estimator.run_colmap()
@@ -120,7 +121,7 @@ class PipelineTrainingThread(QThread):
             # 2. Phase: NeRF Warmup
             self.progress_nerf.emit(5)
             self.log.emit("Loading Dataset...")
-            dataset = RoomDatasetLoader(colmap_dir=colmap_out, images_dir=image_dir)
+            dataset = RoomDatasetLoader(colmap_dir=colmap_model_path, images_dir=image_dir)
             
             self.log.emit("Initializing NeRF...")
             nerf = RoomNeRF().cuda()
@@ -157,7 +158,12 @@ class PipelineTrainingThread(QThread):
                 ground_truth_image, (H, W, K, c2w) = dataset.get_training_batch(idx)
                 
                 view_cam = ViewCamera(H, W, K, c2w)
+                old_count = gaussians.xyz.shape[0]
                 loss = co_optimizer.step(view_cam=view_cam, ground_truth_image=ground_truth_image, render_func=rasterizer.render_room_view)
+                
+                if gaussians.xyz.shape[0] != old_count:
+                    gaussians_optim = optim.Adam(gaussians.parameters(), lr=0.001)
+
                 gaussians_optim.step()
                 
                 if step % 100 == 0:

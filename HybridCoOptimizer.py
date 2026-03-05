@@ -35,4 +35,6 @@ class HybridCoOptimizer:
             prune_mask=(self.gaussians.opacity.squeeze()<0.05)&(current_density<1.0)
             if prune_mask.any():
                 self.gaussians.prune_points(prune_mask)
+        
+        return loss.item()
 

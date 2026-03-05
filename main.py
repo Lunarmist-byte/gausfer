@@ -40,16 +40,17 @@ def main():
     print("Starting 3D Reconstruction")
     image_dir='./images'
     output_dir='./output'
-    colmap_out=os.path.join(output_dir,'sparse')
+    colmap_out = os.path.join(output_dir, 'sparse')
+    colmap_model_path = os.path.join(colmap_out, '0')
     #Bridging
-    if not os.path.exists(os.path.join(colmap_out,"cameras.txt")):
+    if not os.path.exists(os.path.join(colmap_model_path, "cameras.txt")):
         print("Fresh images, running COLMAP")
-        estimator=PoseEstimator(image_path=image_dir,output_path=output_dir)
+        estimator = PoseEstimator(image_path=image_dir, output_path=output_dir)
         estimator.run_colmap()
     else:
         print("Camera poses already found,skipping colmap")
     #Load dataset
-    dataset=RoomDatasetLoader(colmap_dir=colmap_out,images_dir=image_dir)
+    dataset = RoomDatasetLoader(colmap_dir=colmap_model_path, images_dir=image_dir)
     #Initialize NeRFrde 
     nerf=RoomNeRF().cuda()
     trainer=NeRFTrainer(nerf)
@@ -82,7 +83,12 @@ def main():
         ground_truth_image,(H,W,K,c2w)=dataset.get_training_batch(idx)
         #Wrap the NeRF matrices into Camera
         view_cam=ViewCamera(H,W,K,c2w)
+        old_count = gaussians.xyz.shape[0]
         loss=co_optimizer.step(view_cam=view_cam,ground_truth_image=ground_truth_image,render_func=rasterizer.render_room_view)
+        
+        if gaussians.xyz.shape[0] != old_count:
+            gaussians_optim = optim.Adam(gaussians.parameters(), lr=0.001)
+
         #Apply graident updates
         gaussians_optim.step()
         

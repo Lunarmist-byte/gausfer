@@ -22,7 +22,7 @@ class HybridCoOptimizer:
                 problematic_xyz=self.gaussians.xyz[high_error_mask]
                 #asking if nerf detects solid matter
                 nerf_density=self.nerf(problematic_xyz)[...,3]
-                valid_split_mask=nerf_density>5.0
+                valid_split_mask=nerf_density>15.0 # Increased to 15.0 for 8GB VRAM limit
 
                 if valid_split_mask.any():
                     combined_mask=torch.zeros_like(high_error_mask)

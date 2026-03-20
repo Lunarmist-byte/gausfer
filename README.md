@@ -44,9 +44,30 @@ PyQt6 & Streamlit (for GUI tools)
 ```bash
 git clone https://github.com/Lunarmist-byte/gausfer
 cd gausfer
-pip install -r requirements.txt
-```
+# 1. Create venv
+python -m venv venv
+venv\Scripts\activate   # Windows
 
+# 2. Install base dependencies
+pip install -r requirements.txt
+
+# 3. Install rasterizer (IMPORTANT)
+pip install --no-build-isolation git+https://github.com/graphdeco-inria/diff-gaussian-rasterization.git
+```
+OR Run
+```bash
+setup.bat #windows
+setup.sh  #linux
+```
+## System Requirements
+### Linux
+CUDA 12.1
+nvcc available (nvcc --version)
+GCC / G++ installed
+### Windows
+CUDA 12.1
+Visual Studio Build Tools
+→ “Desktop development with C++
 ## Usage Workflow
 
 You can now run the full pipeline either using our new Desktop UI or the command line.

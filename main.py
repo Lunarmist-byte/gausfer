@@ -1,7 +1,6 @@
 import os
 import torch
 import torch.optim as optim
-
 from pose_estimator import PoseEstimator
 from dataset_loader import RoomDatasetLoader
 from nerf_model import RoomNeRF
@@ -34,8 +33,6 @@ class ViewCamera:
         proj[3,2]=1.0
 
         self.full_proj=self.w2c@proj
-
-
 def main():
     print("Starting 3D Reconstruction")
     image_dir='./images'
@@ -51,7 +48,7 @@ def main():
         print("Camera poses already found,skipping colmap")
     #Load dataset
     dataset = RoomDatasetLoader(colmap_dir=colmap_model_path, images_dir=image_dir)
-    #Initialize NeRFrde 
+    #Initialize NeRF
     nerf=RoomNeRF().cuda()
     trainer=NeRFTrainer(nerf)
     #Pre-Train

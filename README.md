@@ -59,6 +59,43 @@ OR Run
 setup.bat #windows
 setup.sh  #linux
 ```
+
+### ⚠️ Windows Installation Troubleshooting (Rasterizer)
+
+If you get `ModuleNotFoundError: No module named 'diff_gaussian_rasterization'` or a crash with `[WinError 2] The system cannot find the file specified` when installing on Windows, it means PyTorch can't locate your C++ and CUDA compilers.
+
+You can fix this by building it manually.
+
+**1. Clone the submodule manually**
+Standard PowerShell often fails to build the CUDA extension. First, get the source code locally:
+```bash
+git clone https://github.com/graphdeco-inria/diff-gaussian-rasterization.git
+cd diff-gaussian-rasterization
+git submodule update --init --recursive
+```
+
+**2. Open the Native Tools Prompt**
+Close your regular terminal or PowerShell. Press the Windows key, search for "x64 Native Tools Command Prompt" (this comes with Visual Studio 2019 or 2022), and open it. This terminal has the Microsoft C++ compiler (cl.exe) in its PATH.
+
+**3. Run the manual build sequence**
+In the Native Tools Prompt, navigate back to the downloaded rasterizer folder and run these commands to point PyTorch to your CUDA compiler and disable the default Ninja build system:
+```cmd
+:: Activate your virtual environment
+..\venv\Scripts\activate.bat
+
+:: Set these paths to match your installed CUDA version
+set "CUDA_HOME=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4"
+set "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4"
+
+:: Force PyTorch to use the Native Tools compiler
+set DISTUTILS_USE_SDK=1
+set USE_NINJA=0
+
+:: Install without build isolation
+pip install . --no-build-isolation
+```
+
+*Note: Compiling the .cu and .cpp files for your specific GPU will take a few minutes.*
 ## System Requirements
 ### Linux
 CUDA 12.1

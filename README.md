@@ -51,7 +51,7 @@ venv\Scripts\activate   # Windows
 # 2. Install base dependencies
 pip install -r requirements.txt
 
-# 3. Install rasterizer (IMPORTANT)
+# 3. Install rasterizer
 pip install --no-build-isolation git+https://github.com/graphdeco-inria/diff-gaussian-rasterization.git
 ```
 OR Run

@@ -60,7 +60,7 @@ setup.bat #windows
 setup.sh  #linux
 ```
 
-### ⚠️ Windows Installation Troubleshooting (Rasterizer)
+### Windows Installation Troubleshooting
 
 If you get `ModuleNotFoundError: No module named 'diff_gaussian_rasterization'` or a crash with `[WinError 2] The system cannot find the file specified` when installing on Windows, it means PyTorch can't locate your C++ and CUDA compilers.
 

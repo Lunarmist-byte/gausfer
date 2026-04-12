@@ -4,11 +4,13 @@ import cv2
 import tempfile
 import torch
 import torch.optim as optim
+import numpy as np
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QTabWidget, QPushButton, QLabel, 
                              QProgressBar, QSlider, QSpinBox, QFileDialog, 
                              QPlainTextEdit, QMessageBox, QGroupBox, QCheckBox)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer, QPoint
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor
 from pose_estimator import PoseEstimator
 from dataset_loader import RoomDatasetLoader
 from nerf_model import RoomNeRF
@@ -18,6 +20,129 @@ from HybridCoOptimizer import HybridCoOptimizer
 from rasterizer import RoomRasterizerCUDA
 from gaussian_model import GaussianModel
 from main import ViewCamera
+
+class OrbitCamera:
+    def __init__(self, distance=5.0, target=None):
+        self.distance = distance
+        self.target = target if target is not None else torch.tensor([0.0, 0.0, 0.0], device='cuda')
+        self.yaw = 0.0
+        self.pitch = 0.0
+        
+    def get_c2w(self):
+        # Calculate camera position based on orbit
+        cos_p = np.cos(self.pitch)
+        sin_p = np.sin(self.pitch)
+        cos_y = np.cos(self.yaw)
+        sin_y = np.sin(self.yaw)
+        
+        offset = torch.tensor([
+            self.distance * cos_p * sin_y,
+            self.distance * sin_p,
+            self.distance * cos_p * cos_y
+        ], device='cuda', dtype=torch.float32)
+        
+        pos = self.target + offset
+        
+        # Build look-at matrix
+        forward = -offset / torch.norm(offset)
+        up = torch.tensor([0, 1, 0], dtype=torch.float32, device='cuda')
+        right = torch.cross(up, forward, dim=0)
+        right = right / torch.norm(right)
+        up = torch.cross(forward, right, dim=0)
+        
+        c2w = torch.eye(4, device='cuda')
+        c2w[:3, 0] = right
+        c2w[:3, 1] = up
+        c2w[:3, 2] = forward
+        c2w[:3, 3] = pos
+        return c2w
+
+class GaussianVisualizer(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(640, 480)
+        self.gaussians = None
+        self.rasterizer = RoomRasterizerCUDA()
+        self.camera = OrbitCamera()
+        self.last_mouse_pos = QPoint()
+        
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_render)
+        self.current_image = None
+        self.needs_render = False
+
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+
+    def load_model(self, path):
+        if not os.path.exists(path):
+            return False
+        if self.gaussians is None:
+            self.gaussians = GaussianModel(sh_degree=3)
+        self.gaussians.load_checkpoint(path)
+        self.needs_render = True
+        self.update()
+        return True
+
+    def mousePressEvent(self, event):
+        self.last_mouse_pos = event.pos()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            diff = event.pos() - self.last_mouse_pos
+            self.camera.yaw -= diff.x() * 0.01
+            self.camera.pitch = np.clip(self.camera.pitch + diff.y() * 0.01, -np.pi/2 + 0.1, np.pi/2 - 0.1)
+            self.last_mouse_pos = event.pos()
+            self.needs_render = True
+            self.update()
+        elif event.buttons() & Qt.MouseButton.RightButton:
+            diff = event.pos() - self.last_mouse_pos
+            # Simple pan logic
+            self.camera.target[1] += diff.y() * 0.01
+            self.last_mouse_pos = event.pos()
+            self.needs_render = True
+            self.update()
+
+    def wheelEvent(self, event):
+        self.camera.distance = max(0.1, self.camera.distance - event.angleDelta().y() * 0.005)
+        self.needs_render = True
+        self.update()
+
+    def update_render(self):
+        if not self.needs_render or self.gaussians is None:
+            return
+            
+        # Create a temporary camera object for the rasterizer
+        w, h = self.width(), self.height()
+        # Mock focal length for 60 deg horizontal FOV
+        fx = w / (2.0 * np.tan(np.deg2rad(30)))
+        K = torch.tensor([[fx, 0, w/2], [0, fx, h/2], [0, 0, 1]], device='cuda')
+        c2w = self.camera.get_c2w()
+        
+        view_cam = ViewCamera(h, w, K, c2w)
+        render_data = self.rasterizer.render_room_view(view_cam, self.gaussians)
+        img_tensor = render_data["render"].detach().clamp(0, 1)
+        
+        # Convert torch (3, H, W) to numpy (H, W, 3)
+        img_np = (img_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+        self.current_image = QImage(img_np.data, w, h, w * 3, QImage.Format.Format_RGB888).copy()
+        self.needs_render = False
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        if self.current_image:
+            painter.drawImage(0, 0, self.current_image)
+        else:
+            painter.fillRect(self.rect(), QColor(30, 30, 30))
+            painter.setPen(Qt.GlobalColor.white)
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No model loaded or rendering...")
+        
+    def start(self):
+        self.timer.start(33) # ~30 FPS
+
+    def stop(self):
+        self.timer.stop()
 
 # Config
 SAVE_DIR = "./images"
@@ -277,14 +402,17 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tab_extraction = QWidget()
         self.tab_training = QWidget()
+        self.tab_viewer = QWidget()
         self.tabs.addTab(self.tab_extraction, "1. Data Input")
         self.tabs.addTab(self.tab_training, "2. Execution Pipeline")
+        self.tabs.addTab(self.tab_viewer, "3. Real-Time View")
         main_layout.addWidget(self.tabs)
         
         self.custom_image_dir = './images'
 
         self.setup_extraction_tab()
         self.setup_training_tab()
+        self.setup_visualizer_tab()
         
         # Console Group
         console_group = QGroupBox("Live Output Log")
@@ -527,11 +655,60 @@ class MainWindow(QMainWindow):
         self.training_thread.finished_training.connect(self.on_training_finished)
         self.training_thread.start()
 
+    def setup_visualizer_tab(self):
+        layout = QVBoxLayout(self.tab_viewer)
+        
+        # Header / Controls
+        ctrl_layout = QHBoxLayout()
+        btn_load = QPushButton("Load Last Reconstruction")
+        btn_load.clicked.connect(self.load_last_model)
+        btn_load.setMinimumHeight(35)
+        
+        btn_reset = QPushButton("Reset Camera")
+        btn_reset.clicked.connect(self.reset_viewer_camera)
+        
+        ctrl_layout.addWidget(btn_load)
+        ctrl_layout.addWidget(btn_reset)
+        layout.addLayout(ctrl_layout)
+        
+        # Visualizer Widget
+        self.visualizer = GaussianVisualizer()
+        layout.addWidget(self.visualizer, stretch=1)
+        
+        # Help text
+        help_label = QLabel("Controls: [Left Mouse] Orbit | [Right Mouse] Pan | [Scroll] Zoom")
+        help_label.setStyleSheet("color: #888; font-size: 11px;")
+        help_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(help_label)
+        
+        self.visualizer.start()
+
+    def reset_viewer_camera(self):
+        self.visualizer.camera.yaw = 0.0
+        self.visualizer.camera.pitch = 0.0
+        self.visualizer.camera.distance = 5.0
+        self.visualizer.camera.target = torch.tensor([0.0, 0.0, 0.0], device='cuda')
+        self.visualizer.needs_render = True
+        self.visualizer.update()
+
+    def load_last_model(self):
+        path = "./output/gauss_checkpoint.pth"
+        if os.path.exists(path):
+            self.append_log(f"Loading local model for visualizer: {path}")
+            if self.visualizer.load_model(path):
+                self.append_log("Model loaded successfully!")
+            else:
+                self.append_log("Failed to parse model file.")
+        else:
+            QMessageBox.warning(self, "No Model", "No reconstruction checkpoint found in ./output/")
+
     def on_training_finished(self):
         self.btn_train.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.lbl_status.setText("Status: Reconstruction Finished!")
-        QMessageBox.information(self, "Training Complete", "Full Room Reconstruction completed.")
+        # Auto-load into visualizer
+        self.load_last_model()
+        QMessageBox.information(self, "Training Complete", "Full Room Reconstruction completed. Interactive view is now ready.")
 
     def show_error(self, message):
         self.btn_extract.setEnabled(True)

@@ -17,7 +17,7 @@ class RoomRasterizerCUDA:
             projmatrix=camera.full_proj.cuda().mT,
             sh_degree=3,
             campos=camera.pos.cuda(),
-            prefiltered=True,
+            prefiltered=False,
             debug=False
         )
         rasterizer=GaussianRasterizer(raster_settings=settings)

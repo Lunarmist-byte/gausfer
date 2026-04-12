@@ -1,46 +1,19 @@
-# --- Virtual Environments ---
-gausfer_env/
-venv/
-env/
-.env
-
-# --- Project Specific Data (DO NOT PUSH TO GITHUB) ---
-/images/
-/uploads/
-/output/
-database.db
-
-# --- Python Artifacts ---
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+*.pyc
+venv/
+gausfer_env/
+output/
+images/
+diff-gaussian-rasterization/
 
-# --- Visual Studio / IDEs ---
-.vscode/
-.idea/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
-# --- OS Specific ---
-.DS_Store
-Thumbs.db
+# Datasets and large binary files
+*.rar
+*.zip
+*.tar
+*.gz
+*.7z
+room/
+*.bin
+*.npy
+*.ply
+*.pt

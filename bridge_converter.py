@@ -16,23 +16,51 @@ class NeRFToGaussianBridge:
         '''
         print(f"Generating grid at {resolution}^3 resolution")
         grid_coords=self._create_room_grid(resolution).cuda()
-        extracted_xyz=[]
-        extracted_colors=[]
+        
+        all_densities = []
+        all_rgbs = []
+        
         for i in range(0,grid_coords.shape[0],self.chunk_size):
             chunk=grid_coords[i:i+self.chunk_size]
             with torch.no_grad():
                 predictions=self.nerf(chunk)
-                density=predictions[...,3]
-                rgb=predictions[...,:3]
-            mask=density>threshold
-            if mask.any():
-                extracted_xyz.append(chunk[mask])
-                extracted_colors.append(rgb[mask])
-        if not extracted_xyz:
-            raise ValueError("No dense points found,Check NeRF tarining or lower threshold")
-        final_xyz=torch.cat(extracted_xyz,dim=0)
-        final_colors=torch.cat(extracted_colors,dim=0)
-        print(f"Bridge Completed:Extracted{final_xyz.shape[0]} Gaussian primitives")
+                # Apply activations to match implicit rendering logic
+                density=torch.relu(predictions[...,3])
+                rgb=torch.sigmoid(predictions[...,:3])
+                
+                all_densities.append(density)
+                all_rgbs.append(rgb)
+                
+        full_density = torch.cat(all_densities, dim=0)
+        full_rgb = torch.cat(all_rgbs, dim=0)
+        
+        mask = full_density > threshold
+        if not mask.any():
+            print(f"Warning: No points found at threshold {threshold}.")
+            max_dens = full_density.max().item()
+            print(f"Maximum density in volume is {max_dens:.4f}")
+            if max_dens <= 0:
+                raise ValueError("NeRF model outputting zero density everywhere. Training likely failed.")
+            
+            # Dynamically set threshold to a fraction of max density to ensure extraction
+            threshold = max(0.1, max_dens * 0.5)
+            print(f"Adjusting threshold to {threshold:.4f} and trying again...")
+            mask = full_density > threshold
+            
+        final_xyz = grid_coords[mask]
+        final_colors = full_rgb[mask]
+        
+        # Limit to 1 million points max to prevent OOM
+        if final_xyz.shape[0] > 1000000:
+             print(f"Cap reached: Subsampling {final_xyz.shape[0]} down to 1M points.")
+             indices = torch.randperm(final_xyz.shape[0])[:1000000]
+             final_xyz = final_xyz[indices]
+             final_colors = final_colors[indices]
+
+        if final_xyz.shape[0] == 0:
+             raise ValueError("No dense points found even after threshold adjustment.")
+             
+        print(f"Bridge Completed:Extracted {final_xyz.shape[0]} Gaussian primitives")
         return final_xyz,final_colors
     def _create_room_grid(self,res):
         '''Generates 3D Coordinates spanning the bounding box'''

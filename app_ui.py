@@ -7,7 +7,7 @@ import torch.optim as optim
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QTabWidget, QPushButton, QLabel, 
                              QProgressBar, QSlider, QSpinBox, QFileDialog, 
-                             QPlainTextEdit, QMessageBox, QGroupBox)
+                             QPlainTextEdit, QMessageBox, QGroupBox, QCheckBox)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
 from pose_estimator import PoseEstimator
 from dataset_loader import RoomDatasetLoader
@@ -88,20 +88,32 @@ class VideoExtractorThread(QThread):
         except Exception as e:
             self.error.emit(f"Video Extraction Error: {str(e)}")
 
+import time
+
 class PipelineTrainingThread(QThread):
     progress_colmap = pyqtSignal(int)
     progress_nerf = pyqtSignal(int)
     progress_3dgs = pyqtSignal(int)
     log = pyqtSignal(str)
+    eta = pyqtSignal(str)
     finished_training = pyqtSignal()
     error = pyqtSignal(str)
 
-    def __init__(self):
+    def __init__(self, image_dir='./images', num_epochs=10, num_steps=5000, resume_checkpoint=False):
         super().__init__()
+        self.image_dir = image_dir
+        self.num_epochs = num_epochs
+        self.num_steps = num_steps
+        self.resume_checkpoint = resume_checkpoint
+        self.is_running = True
+
+    def stop(self):
+        self.is_running = False
 
     def run(self):
         try:
-            image_dir = './images'
+            image_dir = self.image_dir
+
             output_dir = './output'
             colmap_out = os.path.join(output_dir, 'sparse')
 
@@ -116,48 +128,92 @@ class PipelineTrainingThread(QThread):
                 self.log.emit("Camera poses already found. Skipping COLMAP.")
             self.progress_colmap.emit(100)
 
-            # 2. Phase: NeRF Warmup
-            self.progress_nerf.emit(5)
+            ckpt_nerf_path = os.path.join(output_dir, "nerf_checkpoint.pth")
+            ckpt_gauss_path = os.path.join(output_dir, "gauss_checkpoint.pth")
+            
             self.log.emit("Loading Dataset...")
             dataset = RoomDatasetLoader(colmap_dir=colmap_model_path, images_dir=image_dir)
-            
-            self.log.emit("Initializing NeRF...")
             nerf = RoomNeRF().cuda()
-            trainer = NeRFTrainer(nerf)
-            
-            self.log.emit("Starting NeRF Warmup (10 Epochs)...")
-            num_epochs = 10
-            for epoch in range(num_epochs):
-                for i in range(len(dataset.images)):
-                    img, poses = dataset.get_training_batch(i)
-                    loss = trainer.train_step(img, poses)
-                self.log.emit(f"NeRF Epoch {epoch} Loss: {loss:.4f}")
-                self.progress_nerf.emit(int(((epoch + 1) / num_epochs) * 100))
-            
-            # 3. Phase: Bridging and 3DGS
-            self.progress_3dgs.emit(5)
-            self.log.emit("Seeding Gaussians via Neural Density...")
-            bbox = [[-5, -5, -5], [5, 5, 5]]
-            bridge = NeRFToGaussianBridge(nerf, bbox)
-            init_xyz, init_rgb = bridge.generate_initial_gaussians()
-            
             gaussians = GaussianModel(sh_degree=3)
-            gaussians.initialize_from_nerf(init_xyz, init_rgb)
+
+            if self.resume_checkpoint and os.path.exists(ckpt_nerf_path) and os.path.exists(ckpt_gauss_path):
+                self.log.emit("Found Checkpoint Data! Resuming directly to Phase 3 (Co-Optimization)...")
+                self.progress_nerf.emit(100)
+                self.progress_3dgs.emit(5)
+                
+                nerf.load_state_dict(torch.load(ckpt_nerf_path))
+                gaussians.load_checkpoint(ckpt_gauss_path)
+            else:
+                if self.resume_checkpoint:
+                    self.log.emit("Resume requested, but no checkpoint found. Starting from scratch...")
+                    
+                # 2. Phase: NeRF Warmup
+                self.progress_nerf.emit(5)
+                self.log.emit("Initializing NeRF...")
+                trainer = NeRFTrainer(nerf)
+                
+                num_epochs = self.num_epochs
+                self.log.emit(f"Starting NeRF Warmup ({num_epochs} Epochs)...")
+                start_time = time.time()
+                for epoch in range(num_epochs):
+                    if not self.is_running:
+                        self.log.emit("Training stopped by user during NeRF Warmup.")
+                        self.eta.emit("ETA: Stopped")
+                        self.finished_training.emit()
+                        return
+                    for i in range(len(dataset.images)):
+                        if not self.is_running:
+                            break
+                        img, poses = dataset.get_training_batch(i)
+                        loss = trainer.train_step(img, poses)
+                        
+                        # Update ETA continuously per image
+                        if i > 0:
+                            elapsed = time.time() - start_time
+                            total_iters_done = epoch * len(dataset.images) + i
+                            avg_time_per_iter = elapsed / total_iters_done
+                            iters_remaining = num_epochs * len(dataset.images) - total_iters_done
+                            rem = avg_time_per_iter * iters_remaining
+                            m, s = divmod(int(rem), 60)
+                            self.eta.emit(f"ETA (NeRF): {m}m {s}s")
+                            
+                    self.log.emit(f"NeRF Epoch {epoch} Loss: {loss:.4f}")
+                    self.progress_nerf.emit(int(((epoch + 1) / num_epochs) * 100))
+                
+                # 3. Phase: Bridging and 3DGS
+                self.progress_3dgs.emit(5)
+                self.log.emit("Seeding Gaussians via Neural Density...")
+                self.eta.emit("ETA: Bridging Arrays (Please Wait)...")
+                bbox = [[-5, -5, -5], [5, 5, 5]]
+                bridge = NeRFToGaussianBridge(nerf, bbox)
+                init_xyz, init_rgb = bridge.generate_initial_gaussians()
+                
+                gaussians.initialize_from_nerf(init_xyz, init_rgb)
+                
+                # Save checkpoints for future resumes
+                torch.save(nerf.state_dict(), ckpt_nerf_path)
+                gaussians.save_checkpoint(ckpt_gauss_path)
             
             gaussians_optim = optim.Adam(gaussians.parameters(), lr=0.001)
             self.log.emit("Starting Hybrid Co-Optimization...")
             co_optimizer = HybridCoOptimizer(nerf, gaussians)
             rasterizer = RoomRasterizerCUDA()
 
-            num_steps = 5000
+            num_steps = self.num_steps
+            start_time = time.time()
             for step in range(num_steps):
+                if not self.is_running:
+                    self.log.emit("Training stopped by user during 3DGS Optimization.")
+                    self.eta.emit("ETA: Stopped")
+                    break
+                    
                 gaussians_optim.zero_grad()
                 idx = step % len(dataset.images)
                 ground_truth_image, (H, W, K, c2w) = dataset.get_training_batch(idx)
                 
                 view_cam = ViewCamera(H, W, K, c2w)
                 old_count = gaussians.xyz.shape[0]
-                loss = co_optimizer.step(view_cam=view_cam, ground_truth_image=ground_truth_image, render_func=rasterizer.render_room_view)
+                loss, _ = co_optimizer.step(view_cam=view_cam, ground_truth_image=ground_truth_image, render_func=rasterizer.render_room_view, step=step)
                 
                 if gaussians.xyz.shape[0] != old_count:
                     gaussians_optim = optim.Adam(gaussians.parameters(), lr=0.001)
@@ -170,9 +226,34 @@ class PipelineTrainingThread(QThread):
                 # Update 3DGS Progress
                 if step % 50 == 0:
                     self.progress_3dgs.emit(int((step / num_steps) * 100))
+                
+                # Update ETA continuously
+                if step > 0:
+                    elapsed = time.time() - start_time
+                    avg_time = elapsed / step
+                    rem = avg_time * (num_steps - step)
+                    m, s = divmod(int(rem), 60)
+                    self.eta.emit(f"ETA (3DGS): {m}m {s}s")
             
             self.progress_3dgs.emit(100)
-            self.log.emit("\n Full Room Reconstruction Done!")
+            self.eta.emit("ETA: Done")
+            
+            out_ply = os.path.join(output_dir, "point_cloud.ply")
+            gaussians.save_ply(out_ply)
+            
+            self.log.emit(f"\n Full Room Reconstruction Done! Saved 3D point cloud to: {out_ply}")
+            
+            try:
+                import subprocess
+                if sys.platform == "win32":
+                    os.startfile(os.path.abspath(out_ply))
+                elif sys.platform == "darwin":
+                    subprocess.call(["open", os.path.abspath(out_ply)])
+                else:
+                    subprocess.call(["xdg-open", os.path.abspath(out_ply)])
+            except Exception as e:
+                self.log.emit(f"Could not automatically open PLY file: {str(e)}")
+                
             self.finished_training.emit()
 
         except Exception as e:
@@ -193,10 +274,12 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tab_extraction = QWidget()
         self.tab_training = QWidget()
-        self.tabs.addTab(self.tab_extraction, "1. Video Extraction")
+        self.tabs.addTab(self.tab_extraction, "1. Data Input")
         self.tabs.addTab(self.tab_training, "2. Execution Pipeline")
         main_layout.addWidget(self.tabs)
         
+        self.custom_image_dir = './images'
+
         self.setup_extraction_tab()
         self.setup_training_tab()
         
@@ -216,23 +299,34 @@ class MainWindow(QMainWindow):
     def setup_extraction_tab(self):
         layout = QVBoxLayout(self.tab_extraction)
         
+        # Option 1: Video Group
+        video_group = QGroupBox("Option 1: Video Extraction")
+        video_group.setStyleSheet("QGroupBox { font-size: 14px; font-weight: bold; }")
+        video_layout = QVBoxLayout()
+        
         lbl_desc = QLabel("Upload a room walkthrough video. The system will automatically extract sharp frames for the dataset.")
-        layout.addWidget(lbl_desc)
+        lbl_desc.setWordWrap(True)
+        lbl_desc.setStyleSheet("font-weight: normal; font-size: 12px;")
+        video_layout.addWidget(lbl_desc)
         
         # Video Selection
         file_layout = QHBoxLayout()
         self.lbl_file = QLabel("No Video Selected")
+        self.lbl_file.setStyleSheet("font-weight: normal; font-size: 12px;")
         btn_select = QPushButton("Select Video")
+        btn_select.setStyleSheet("font-weight: normal; font-size: 12px;")
         btn_select.clicked.connect(self.select_video)
         file_layout.addWidget(self.lbl_file)
         file_layout.addWidget(btn_select)
-        layout.addLayout(file_layout)
+        video_layout.addLayout(file_layout)
         
         # Settings
         settings_layout = QHBoxLayout()
         # FPS
         fps_layout = QVBoxLayout()
-        fps_layout.addWidget(QLabel("Target FPS:"))
+        lbl_fps = QLabel("Target FPS:")
+        lbl_fps.setStyleSheet("font-weight: normal; font-size: 12px;")
+        fps_layout.addWidget(lbl_fps)
         self.spin_fps = QSpinBox()
         self.spin_fps.setRange(1, 10)
         self.spin_fps.setValue(2)
@@ -241,23 +335,55 @@ class MainWindow(QMainWindow):
         
         # Blur Strictness
         blur_layout = QVBoxLayout()
-        blur_layout.addWidget(QLabel("Blur Strictness Threshold:"))
+        blur_lbl = QLabel("Blur Strictness Threshold:")
+        blur_lbl.setStyleSheet("font-weight: normal; font-size: 12px;")
+        blur_layout.addWidget(blur_lbl)
         self.slider_blur = QSlider(Qt.Orientation.Horizontal)
         self.slider_blur.setRange(50, 300)
         self.slider_blur.setValue(100)
         blur_layout.addWidget(self.slider_blur)
         settings_layout.addLayout(blur_layout)
         
-        layout.addLayout(settings_layout)
+        video_layout.addLayout(settings_layout)
         
         # Extraction control
         self.btn_extract = QPushButton("Start Extraction")
         self.btn_extract.setMinimumHeight(40)
+        self.btn_extract.setStyleSheet("font-weight: bold; font-size: 12px;")
         self.btn_extract.clicked.connect(self.start_extraction)
-        layout.addWidget(self.btn_extract)
+        video_layout.addWidget(self.btn_extract)
         
         self.prog_extraction = QProgressBar()
-        layout.addWidget(self.prog_extraction)
+        video_layout.addWidget(self.prog_extraction)
+        
+        video_group.setLayout(video_layout)
+        layout.addWidget(video_group)
+        
+        layout.addSpacing(10)
+        
+        # Option 2: Image Folder Group
+        folder_group = QGroupBox("Option 2: Use Existing Images Folder")
+        folder_group.setStyleSheet("QGroupBox { font-size: 14px; font-weight: bold; }")
+        folder_layout = QVBoxLayout()
+        
+        lbl_desc2 = QLabel("Already have extracted frames? Select the directory containing your images (bypasses video extraction).")
+        lbl_desc2.setWordWrap(True)
+        lbl_desc2.setStyleSheet("font-weight: normal; font-size: 12px;")
+        folder_layout.addWidget(lbl_desc2)
+        
+        f_layout = QHBoxLayout()
+        self.lbl_folder = QLabel("Current Folder: ./images")
+        self.lbl_folder.setStyleSheet("font-weight: normal; font-size: 12px;")
+        btn_select_folder = QPushButton("Browse Folder")
+        btn_select_folder.setStyleSheet("font-weight: normal; font-size: 12px;")
+        btn_select_folder.clicked.connect(self.select_folder)
+        f_layout.addWidget(self.lbl_folder)
+        f_layout.addWidget(btn_select_folder)
+        folder_layout.addLayout(f_layout)
+        
+        folder_group.setLayout(folder_layout)
+        layout.addWidget(folder_group)
+
         layout.addStretch()
 
         self.video_path = None
@@ -268,10 +394,38 @@ class MainWindow(QMainWindow):
         lbl_desc = QLabel("Execute the Hybrid Gausfer NeRF+3DGS Pipeline.")
         layout.addWidget(lbl_desc)
         
+        # Settings
+        params_layout = QHBoxLayout()
+        lbl_epochs = QLabel("NeRF Epochs:")
+        self.spin_epochs = QSpinBox()
+        self.spin_epochs.setRange(1, 100)
+        self.spin_epochs.setValue(10)
+        params_layout.addWidget(lbl_epochs)
+        params_layout.addWidget(self.spin_epochs)
+        
+        lbl_steps = QLabel("Optimization Steps:")
+        self.spin_steps = QSpinBox()
+        self.spin_steps.setRange(100, 50000)
+        self.spin_steps.setSingleStep(100)
+        self.spin_steps.setValue(5000)
+        params_layout.addWidget(lbl_steps)
+        params_layout.addWidget(self.spin_steps)
+        
+        layout.addLayout(params_layout)
+        
+        self.chk_resume = QCheckBox("Resume from Checkpoint (Skip Phase 1 & Phase 2 if available)")
+        layout.addWidget(self.chk_resume)
+        
         # Status Label
+        status_layout = QHBoxLayout()
         self.lbl_status = QLabel("Status: Idle")
         self.lbl_status.setStyleSheet("font-weight: bold;")
-        layout.addWidget(self.lbl_status)
+        self.lbl_eta = QLabel("ETA: N/A")
+        self.lbl_eta.setStyleSheet("font-weight: bold;")
+        self.lbl_eta.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        status_layout.addWidget(self.lbl_status)
+        status_layout.addWidget(self.lbl_eta)
+        layout.addLayout(status_layout)
         
         # COLMAP Progress
         layout.addWidget(QLabel("Phase 1: COLMAP Pose Estimation"))
@@ -279,20 +433,30 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.prog_colmap)
         
         # NeRF Progress
-        layout.addWidget(QLabel("Phase 2: NeRF Warmup (10 Epochs)"))
+        layout.addWidget(QLabel("Phase 2: NeRF Warmup"))
         self.prog_nerf = QProgressBar()
         layout.addWidget(self.prog_nerf)
         
         # 3DGS Progress
-        layout.addWidget(QLabel("Phase 3: Hybrid Co-Optimization (5000 Steps)"))
+        layout.addWidget(QLabel("Phase 3: Hybrid Co-Optimization"))
         self.prog_3dgs = QProgressBar()
         layout.addWidget(self.prog_3dgs)
         
+        btn_layout = QHBoxLayout()
         self.btn_train = QPushButton("Start Gausfer Pipeline Training")
         self.btn_train.setMinimumHeight(50)
         self.btn_train.setStyleSheet("font-size: 14px; font-weight: bold;")
         self.btn_train.clicked.connect(self.start_training)
-        layout.addWidget(self.btn_train)
+        
+        self.btn_stop = QPushButton("Stop")
+        self.btn_stop.setMinimumHeight(50)
+        self.btn_stop.setStyleSheet("font-size: 14px; font-weight: bold;")
+        self.btn_stop.clicked.connect(self.stop_training)
+        self.btn_stop.setEnabled(False)
+        
+        btn_layout.addWidget(self.btn_train)
+        btn_layout.addWidget(self.btn_stop)
+        layout.addLayout(btn_layout)
         
         layout.addStretch()
 
@@ -301,6 +465,12 @@ class MainWindow(QMainWindow):
         if file_name:
             self.video_path = file_name
             self.lbl_file.setText(os.path.basename(file_name))
+
+    def select_folder(self):
+        folder_name = QFileDialog.getExistingDirectory(self, "Select Images Folder")
+        if folder_name:
+            self.custom_image_dir = folder_name
+            self.lbl_folder.setText(folder_name)
 
     def start_extraction(self):
         if not self.video_path:
@@ -321,31 +491,50 @@ class MainWindow(QMainWindow):
         self.btn_extract.setEnabled(True)
         QMessageBox.information(self, "Success", f"Extracted {saved_count} frames successfully!")
 
+    def stop_training(self):
+        if hasattr(self, 'training_thread') and self.training_thread.isRunning():
+            self.training_thread.stop()
+            self.lbl_status.setText("Status: Stopping...")
+            self.btn_stop.setEnabled(False)
+
     def start_training(self):
         # Reset bars
         self.prog_colmap.setValue(0)
         self.prog_nerf.setValue(0)
         self.prog_3dgs.setValue(0)
         self.btn_train.setEnabled(False)
+        self.btn_stop.setEnabled(True)
         self.lbl_status.setText("Status: Pipeline Running...")
         
-        self.training_thread = PipelineTrainingThread()
+        epochs = self.spin_epochs.value()
+        steps = self.spin_steps.value()
+        is_resume = self.chk_resume.isChecked()
+        self.training_thread = PipelineTrainingThread(
+            image_dir=self.custom_image_dir,
+            num_epochs=epochs,
+            num_steps=steps,
+            resume_checkpoint=is_resume
+        )
         self.training_thread.progress_colmap.connect(self.prog_colmap.setValue)
         self.training_thread.progress_nerf.connect(self.prog_nerf.setValue)
         self.training_thread.progress_3dgs.connect(self.prog_3dgs.setValue)
         self.training_thread.log.connect(self.append_log)
+        self.training_thread.eta.connect(self.lbl_eta.setText)
         self.training_thread.error.connect(self.show_error)
         self.training_thread.finished_training.connect(self.on_training_finished)
         self.training_thread.start()
 
     def on_training_finished(self):
         self.btn_train.setEnabled(True)
-        self.lbl_status.setText("Status: Reconstruction Finished! 🎯")
+        self.btn_stop.setEnabled(False)
+        self.lbl_status.setText("Status: Reconstruction Finished!")
         QMessageBox.information(self, "Training Complete", "Full Room Reconstruction completed.")
 
     def show_error(self, message):
         self.btn_extract.setEnabled(True)
         self.btn_train.setEnabled(True)
+        if hasattr(self, 'btn_stop'):
+            self.btn_stop.setEnabled(False)
         QMessageBox.critical(self, "Pipeline Error", message)
 
     def append_log(self, text):

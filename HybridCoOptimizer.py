@@ -5,7 +5,7 @@ class HybridCoOptimizer:
     '''implements nerf directly to gaussian
     uses volumetric understanding of NeRF to guide the densification
     and pruning of 3DGS'''
-    def __init__(self,nerf_model,gaussian_model,grad_threshold=0.0001,density_threshold=20.0, prune_density_threshold=0.1, lambda_dssim=0.2):
+    def __init__(self,nerf_model,gaussian_model,grad_threshold=0.0001,density_threshold=20.0, prune_density_threshold=2.0, lambda_dssim=0.2):
         self.nerf=nerf_model
         self.gaussians=gaussian_model
         self.grad_threshold=grad_threshold
@@ -90,7 +90,9 @@ class HybridCoOptimizer:
                     self.gaussians.prune_points(prune_mask)
                     print(f"DEBUG: Splat count reached {self.gaussians.xyz.shape[0]}")
                 else:
-                    print(f"DEBUG: Pruning cycle skipped (0 points met criteria)")
+                    min_dens = current_density.min().item()
+                    near_opacity = (self.gaussians.opacity.squeeze() < 0.05).sum().item()
+                    print(f"DEBUG: Pruning cycle skipped (0 points met criteria). Min Density: {min_dens:.4f}, Points near opacity threshold (<0.05): {near_opacity}")
         
         return loss.item(), rendered_image
 

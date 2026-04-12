@@ -195,8 +195,10 @@ class PipelineTrainingThread(QThread):
                 gaussians.save_checkpoint(ckpt_gauss_path)
             
             gaussians_optim = optim.Adam(gaussians.parameters(), lr=0.001)
-            self.log.emit("Starting Hybrid Co-Optimization...")
-            co_optimizer = HybridCoOptimizer(nerf, gaussians)
+            # Match main.py's aggressive pruning threshold
+            prune_threshold = 1.5
+            self.log.emit(f"Starting Hybrid Co-Optimization (Prune Threshold: {prune_threshold})...")
+            co_optimizer = HybridCoOptimizer(nerf, gaussians, prune_density_threshold=prune_threshold)
             rasterizer = RoomRasterizerCUDA()
 
             num_steps = self.num_steps

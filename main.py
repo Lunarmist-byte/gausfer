@@ -174,14 +174,15 @@ def main():
     # Aggressive thresholds for quick mode to ensure densification happens
     q_grad = 0.0001 if args.quick else 0.0002
     q_dens = 0.1 if args.quick else 15.0
+    q_prune = 2.0 if args.quick else 1.5
     
     # Higher LR for quick mode to converge faster
     g_lr = 0.005 if args.quick else 0.001
     gaussians_optim=optim.Adam(gaussians.parameters(),lr=g_lr)
     
     #Optimization Loop
-    print("Optimizing....")
-    co_optimizer=HybridCoOptimizer(nerf,gaussians, grad_threshold=q_grad, density_threshold=q_dens)
+    print(f"Optimizing with Prune Threshold: {q_prune}...")
+    co_optimizer=HybridCoOptimizer(nerf,gaussians, grad_threshold=q_grad, density_threshold=q_dens, prune_density_threshold=q_prune)
     rasterizer=RoomRasterizerCUDA()
 
     num_steps = 500 if args.quick else 5000

@@ -216,7 +216,8 @@ class PipelineTrainingThread(QThread):
                 loss, _ = co_optimizer.step(view_cam=view_cam, ground_truth_image=ground_truth_image, render_func=rasterizer.render_room_view, step=step)
                 
                 if gaussians.xyz.shape[0] != old_count:
-                    gaussians_optim = optim.Adam(gaussians.parameters(), lr=0.001)
+                    from main import update_optimizer
+                    gaussians_optim = update_optimizer(gaussians_optim, gaussians.parameters(), lr=0.001)
 
                 gaussians_optim.step()
                 

@@ -49,18 +49,24 @@ class NeRFTrainer:
         self.optimizer.zero_grad()
         H,W,K,c2w=pose_batch
         
-        # Flatten image to sample rays
-        img_flat = image_batch.reshape(-1, 3)
-        rays_o, rays_d = self._get_rays(H, W, K, c2w)
-        rays_o = rays_o.reshape(-1, 3)
-        rays_d = rays_d.reshape(-1, 3)
-        
-        # Sample 4096 rays for better learning
+        # Sample 4096 rays directly for performance
         num_rays = 4096
         coords = torch.randint(0, H*W, (num_rays,), device='cuda')
         
-        select_o = rays_o[coords]
-        select_d = rays_d[coords]
+        # Calculate selected rays only (much faster than full meshgrid)
+        i = (coords % W).to(torch.float32)
+        j = (coords // W).to(torch.float32)
+        
+        fx, fy = K[0,0], K[1,1]
+        cx, cy = K[0,2], K[1,2]
+        
+        dirs = torch.stack([(i-cx)/fx, (j-cy)/fy, torch.ones_like(i)], dim=-1)
+        rotation_matrix = c2w[:3,:3]
+        select_d = torch.sum(dirs[...,None,:] * rotation_matrix, dim=-1)
+        select_d = select_d / torch.norm(select_d, dim=-1, keepdim=True)
+        select_o = c2w[:3,3].expand(select_d.shape)
+        
+        img_flat = image_batch.reshape(-1, 3)
         target_rgb = img_flat[coords]
         
         # Render sampled rays (manually for training to avoid all_rgb accumulation)

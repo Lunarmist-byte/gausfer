@@ -37,8 +37,15 @@ class HybridCoOptimizer:
                     high_error_mask=torch.norm(grads,dim=-1)>self.grad_threshold
                     if high_error_mask.any():
                         problematic_xyz=self.gaussians.xyz[high_error_mask]
-                        #asking if nerf detects solid matter
-                        nerf_density=torch.relu(self.nerf(problematic_xyz)[...,3])
+                        
+                        # Chunked NeRF evaluation to prevent OOM/Stalls
+                        nerf_densities = []
+                        chunk_size = 65536
+                        for i in range(0, problematic_xyz.shape[0], chunk_size):
+                            chunk = problematic_xyz[i:i+chunk_size]
+                            nerf_densities.append(torch.relu(self.nerf(chunk)[...,3]))
+                        nerf_density = torch.cat(nerf_densities, dim=0)
+                        
                         valid_split_mask=nerf_density>self.density_threshold
 
                         if valid_split_mask.any():
@@ -54,12 +61,22 @@ class HybridCoOptimizer:
 
             #nerf-guided pruning
             with torch.no_grad():
-                current_density=torch.relu(self.nerf(self.gaussians.xyz)[...,3])
+                # Chunked NeRF evaluation for pruning too
+                nerf_densities = []
+                gauss_xyz = self.gaussians.xyz
+                for i in range(0, gauss_xyz.shape[0], chunk_size):
+                    chunk = gauss_xyz[i:i+chunk_size]
+                    nerf_densities.append(torch.relu(self.nerf(chunk)[...,3]))
+                current_density = torch.cat(nerf_densities, dim=0)
+                
                 prune_mask = (self.gaussians.opacity.squeeze() < 0.01)
                 
                 # Also prune Gaussians that are way too large
                 max_scales = torch.max(self.gaussians.scales, dim=1).values
                 prune_mask = prune_mask | (max_scales > 2.0)
+
+                # Actually use NeRF to prune empty space
+                prune_mask = prune_mask | (current_density < 0.01)
 
                 print(f"DEBUG: Pruning {prune_mask.sum().item()} points out of {self.gaussians.xyz.shape[0]}")
                 if prune_mask.any():

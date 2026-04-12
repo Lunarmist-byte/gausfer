@@ -5,11 +5,12 @@ class HybridCoOptimizer:
     '''implements nerf directly to gaussian
     uses volumetric understanding of NeRF to guide the densification
     and pruning of 3DGS'''
-    def __init__(self,nerf_model,gaussian_model,grad_threshold=0.0002,density_threshold=20.0, lambda_dssim=0.2):
+    def __init__(self,nerf_model,gaussian_model,grad_threshold=0.0001,density_threshold=20.0, prune_density_threshold=0.1, lambda_dssim=0.2):
         self.nerf=nerf_model
         self.gaussians=gaussian_model
         self.grad_threshold=grad_threshold
         self.density_threshold=density_threshold
+        self.prune_density_threshold=prune_density_threshold
         self.lambda_dssim=lambda_dssim
     def step(self,view_cam,ground_truth_image,render_func, step=0):
         #render the gaussians
@@ -57,6 +58,7 @@ class HybridCoOptimizer:
                             split_mask = combined_mask & (max_scales > 0.1)
                             clone_mask = combined_mask & (max_scales <= 0.1)
                             
+                            print(f"DEBUG: Co-Optimization triggering densification: Clones: {clone_mask.sum().item()}, Splits: {split_mask.sum().item()}")
                             self.gaussians.densify_clone_split(clone_mask, split_mask)
 
             #nerf-guided pruning
@@ -69,19 +71,26 @@ class HybridCoOptimizer:
                     nerf_densities.append(torch.relu(self.nerf(chunk)[...,3]))
                 current_density = torch.cat(nerf_densities, dim=0)
                 
-                prune_mask = (self.gaussians.opacity.squeeze() < 0.01)
+                opacity_mask = (self.gaussians.opacity.squeeze() < 0.01)
                 
                 # Also prune Gaussians that are way too large
                 max_scales = torch.max(self.gaussians.scales, dim=1).values
-                prune_mask = prune_mask | (max_scales > 2.0)
+                size_mask = (max_scales > 2.0)
 
                 # Actually use NeRF to prune empty space
-                prune_mask = prune_mask | (current_density < 0.01)
+                nerf_mask = (current_density < self.prune_density_threshold)
 
-                print(f"DEBUG: Pruning {prune_mask.sum().item()} points out of {self.gaussians.xyz.shape[0]}")
+                prune_mask = opacity_mask | size_mask | nerf_mask
+
                 if prune_mask.any():
+                    p_opac = opacity_mask.sum().item()
+                    p_size = size_mask.sum().item()
+                    p_nerf = nerf_mask.sum().item()
+                    print(f"DEBUG: Pruning {prune_mask.sum().item()} points (Opacity: {p_opac}, Size: {p_size}, NeRF: {p_nerf})")
                     self.gaussians.prune_points(prune_mask)
-                    print(f"DEBUG: Splat count is now {self.gaussians.xyz.shape[0]}")
+                    print(f"DEBUG: Splat count reached {self.gaussians.xyz.shape[0]}")
+                else:
+                    print(f"DEBUG: Pruning cycle skipped (0 points met criteria)")
         
         return loss.item(), rendered_image
 

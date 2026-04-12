@@ -20,6 +20,7 @@ from HybridCoOptimizer import HybridCoOptimizer
 from rasterizer import RoomRasterizerCUDA
 from gaussian_model import GaussianModel
 from main import ViewCamera
+from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 
 class OrbitCamera:
     def __init__(self, distance=5.0, target=None):
@@ -64,6 +65,7 @@ class GaussianVisualizer(QWidget):
         self.gaussians = None
         self.rasterizer = RoomRasterizerCUDA()
         self.camera = OrbitCamera()
+        self.scale_modifier = 1.0
         self.last_mouse_pos = QPoint()
         
         self.timer = QTimer(self)
@@ -120,12 +122,38 @@ class GaussianVisualizer(QWidget):
         c2w = self.camera.get_c2w()
         
         view_cam = ViewCamera(h, w, K, c2w)
-        render_data = self.rasterizer.render_room_view(view_cam, self.gaussians)
-        img_tensor = render_data["render"].detach().clamp(0, 1)
+        
+        # Manually inject scale modifier into rasterizer settings
+        settings = GaussianRasterizationSettings(
+            image_height=int(view_cam.H),
+            image_width=int(view_cam.W),
+            tanfovx=view_cam.tanfovx,
+            tanfovy=view_cam.tanfovy,
+            bg=torch.tensor([0, 0, 0], dtype=torch.float32, device='cuda'),
+            scale_modifier=self.scale_modifier,
+            viewmatrix=view_cam.w2c.cuda().mT,
+            projmatrix=view_cam.full_proj.cuda().mT,
+            sh_degree=3,
+            campos=view_cam.pos.cuda(),
+            prefiltered=False,
+            debug=False
+        )
+        rasterizer = GaussianRasterizer(raster_settings=settings)
+        render_data, _ = rasterizer(
+            means3D=self.gaussians.xyz,
+            means2D=torch.zeros_like(self.gaussians.xyz, device='cuda'),
+            shs=self.gaussians.shs,
+            colors_precomp=None,
+            opacities=self.gaussians.opacity,
+            scales=self.gaussians.scales,
+            rotations=self.gaussians.rotations
+        )
+        
+        img_tensor = render_data.detach().clamp(0, 1)
         
         # Convert torch (3, H, W) to numpy (H, W, 3)
         img_np = (img_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-        self.current_image = QImage(img_np.data, w, h, w * 3, QImage.Format.Format_RGB888).copy()
+        self.current_image = QImage(img_np.tobytes(), w, h, w * 3, QImage.Format.Format_RGB888)
         self.needs_render = False
         self.update()
 
@@ -349,7 +377,13 @@ class PipelineTrainingThread(QThread):
                 gaussians_optim.step()
                 
                 if step % 100 == 0:
-                    self.log.emit(f"Step {step}/{num_steps} | Loss: {loss:.4f} | Splat Count: {gaussians.xyz.shape[0]}")
+                    self.log.emit(f"Step {step}/{num_steps} | Loss: {loss:.4f} | Splat Count: {gaussians.xyz.shape[0]} | SH: {gaussians.active_sh_degree}")
+                
+                 # Increment SH degree for detail warmup
+                if step > 0 and step % (num_steps // 4) == 0:
+                    if gaussians.active_sh_degree < gaussians.max_sh_degree:
+                        gaussians.active_sh_degree += 1
+                        self.log.emit(f"Detail Level Up: Increasing SH Degree to {gaussians.active_sh_degree}")
                 
                 # Update 3DGS Progress
                 if step % 50 == 0:
@@ -669,6 +703,17 @@ class MainWindow(QMainWindow):
         
         ctrl_layout.addWidget(btn_load)
         ctrl_layout.addWidget(btn_reset)
+        
+        # Scale Slider
+        ctrl_layout.addSpacing(20)
+        ctrl_layout.addWidget(QLabel("Gaussian Scale:"))
+        self.slider_gauss_scale = QSlider(Qt.Orientation.Horizontal)
+        self.slider_gauss_scale.setRange(1, 100)
+        self.slider_gauss_scale.setValue(100)
+        self.slider_gauss_scale.setFixedWidth(150)
+        self.slider_gauss_scale.valueChanged.connect(self.update_gauss_scale)
+        ctrl_layout.addWidget(self.slider_gauss_scale)
+        
         layout.addLayout(ctrl_layout)
         
         # Visualizer Widget
@@ -729,6 +774,11 @@ class MainWindow(QMainWindow):
         sys.stdout = self.stream
         # We can also redirect stderr to the console:
         # sys.stderr = self.stream
+
+    def update_gauss_scale(self, value):
+        self.visualizer.scale_modifier = value / 100.0
+        self.visualizer.needs_render = True
+        self.visualizer.update()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

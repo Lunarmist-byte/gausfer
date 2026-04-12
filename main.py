@@ -171,10 +171,10 @@ def main():
         torch.save(nerf.state_dict(), ckpt_nerf_path)
         gaussians.save_checkpoint(ckpt_gauss_path)
     
-    # Aggressive thresholds for quick mode to ensure densification happens
-    q_grad = 0.0001 if args.quick else 0.0002
-    q_dens = 0.1 if args.quick else 15.0
-    q_prune = 2.0 if args.quick else 1.5
+    # Aggressive thresholds for room details
+    q_grad = 0.00005 if args.quick else 0.0001
+    q_dens = 0.05 if args.quick else 10.0
+    q_prune = 1.0 if args.quick else 1.2
     
     # Higher LR for quick mode to converge faster
     g_lr = 0.005 if args.quick else 0.001
@@ -203,8 +203,14 @@ def main():
         #Apply graident updates
         gaussians_optim.step()
         
+        # Increment SH degree for detail warmup
+        if step > 0 and step % 1000 == 0:
+            if gaussians.active_sh_degree < gaussians.max_sh_degree:
+                print(f"  [Gaussian] Incrementing active SH degree to {gaussians.active_sh_degree + 1}")
+                gaussians.active_sh_degree += 1
+
         if step % 10 == 0:
-            print(f"  [Gaussian] Step {step}/{num_steps} | Loss: {loss:.4f} | Splat Count: {gaussians.xyz.shape[0]}")
+            print(f"  [Gaussian] Step {step}/{num_steps} | Loss: {loss:.4f} | Splat Count: {gaussians.xyz.shape[0]} | SH Degree: {gaussians.active_sh_degree}")
 
     print("\n Full Room Reconstruction done")
     

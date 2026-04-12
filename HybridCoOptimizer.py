@@ -29,8 +29,8 @@ class HybridCoOptimizer:
         loss = (1.0 - self.lambda_dssim) * l1_loss + self.lambda_dssim * ssim_loss
         loss.backward()
         
-        # Periodic NeRF Guided Densification/Pruning (expensive, so only every 50 steps)
-        if step > 0 and step % 50 == 0:
+        # Periodic NeRF Guided Densification/Pruning (expensive, so only every 25 steps)
+        if step > 0 and step % 25 == 0:
             #Nerf Guided Densification
             with torch.no_grad():
                 grads=self.gaussians.xyz.grad
@@ -54,9 +54,9 @@ class HybridCoOptimizer:
                             combined_mask[high_error_mask]=valid_split_mask
                             
                             max_scales = torch.max(self.gaussians.scales, dim=1).values
-                            # Scene extent is around 10 based on bbox [-5, 5]. Let's say 0.01 * 10 = 0.1
-                            split_mask = combined_mask & (max_scales > 0.1)
-                            clone_mask = combined_mask & (max_scales <= 0.1)
+                            # Tighter splitting threshold for room detail
+                            split_mask = combined_mask & (max_scales > 0.05)
+                            clone_mask = combined_mask & (max_scales <= 0.05)
                             
                             print(f"DEBUG: Co-Optimization triggering densification: Clones: {clone_mask.sum().item()}, Splits: {split_mask.sum().item()}")
                             self.gaussians.densify_clone_split(clone_mask, split_mask)
@@ -73,9 +73,9 @@ class HybridCoOptimizer:
                 
                 opacity_mask = (self.gaussians.opacity.squeeze() < 0.01)
                 
-                # Also prune Gaussians that are way too large
+                # Also prune Gaussians that are way too large (blobs)
                 max_scales = torch.max(self.gaussians.scales, dim=1).values
-                size_mask = (max_scales > 2.0)
+                size_mask = (max_scales > 0.5)
 
                 # Actually use NeRF to prune empty space
                 nerf_mask = (current_density < self.prune_density_threshold)

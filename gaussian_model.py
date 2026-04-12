@@ -12,6 +12,7 @@ class GaussianModel(nn.Module):
     def __init__(self,sh_degree=3):
         super().__init__()
         self.max_sh_degree=sh_degree
+        self.active_sh_degree=0 # Start at degree 0 for stability
         #core parameters that the Co-Optimizer will update
         self._xyz=torch.empty(0)
         self._features_dc=torch.empty(0)#Diffuse to Base RGB
@@ -72,8 +73,8 @@ class GaussianModel(nn.Module):
         avg_dist = nearest_dists.mean(dim=-1).mean()
         
         # Log-scale for GaussianModel
-        # Multiply by 3.0 to ensure enough overlap for sparse point clouds
-        initial_scale = torch.clamp(avg_dist * 3.0, min=0.005, max=0.2)
+        # Multiply by 2.0 (down from 3.0) for tighter initial fit
+        initial_scale = torch.clamp(avg_dist * 2.0, min=0.001, max=0.05)
         print(f"  Determined average point distance: {initial_scale:.4f}")
         return torch.log(torch.full((xyz.shape[0], 3), initial_scale, device='cuda'))
 
@@ -83,7 +84,10 @@ class GaussianModel(nn.Module):
         return self._xyz.contiguous()
     @property
     def shs(self):
-        return torch.cat([self._features_dc, self._features_rest], dim=1).contiguous()
+        # Mask out SH degrees beyond the active one to allow gradual warmup
+        num_sh_coeffs = (self.active_sh_degree + 1) ** 2
+        shs_full = torch.cat([self._features_dc, self._features_rest], dim=1)
+        return shs_full[:, :num_sh_coeffs, :].contiguous()
     @property
     def opacity(self):
         return torch.sigmoid(self._opacity).contiguous()

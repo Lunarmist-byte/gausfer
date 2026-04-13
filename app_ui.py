@@ -133,7 +133,7 @@ class GaussianVisualizer(QWidget):
             scale_modifier=self.scale_modifier,
             viewmatrix=view_cam.w2c.cuda().mT,
             projmatrix=view_cam.full_proj.cuda().mT,
-            sh_degree=gaussians.active_sh_degree,
+            sh_degree=self.gaussians.active_sh_degree,
             campos=view_cam.pos.cuda(),
             prefiltered=False,
             debug=False
@@ -355,28 +355,56 @@ class PipelineTrainingThread(QThread):
 
             num_steps = self.num_steps
             start_time = time.time()
+            consecutive_failures = 0
+            max_consecutive_failures = 5
             for step in range(num_steps):
                 if not self.is_running:
                     self.log.emit("Training stopped by user during 3DGS Optimization.")
                     self.eta.emit("ETA: Stopped")
+                    # Auto-save on user stop so progress is never lost
+                    self.log.emit("Auto-saving checkpoint on stop...")
+                    torch.save(nerf.state_dict(), ckpt_nerf_path)
+                    gaussians.save_checkpoint(ckpt_gauss_path)
                     break
+                
+                try:
+                    gaussians_optim.zero_grad()
+                    idx = step % len(dataset.images)
+                    ground_truth_image, (H, W, K, c2w) = dataset.get_training_batch(idx)
                     
-                gaussians_optim.zero_grad()
-                idx = step % len(dataset.images)
-                ground_truth_image, (H, W, K, c2w) = dataset.get_training_batch(idx)
-                
-                view_cam = ViewCamera(H, W, K, c2w)
-                old_count = gaussians.xyz.shape[0]
-                loss, _ = co_optimizer.step(view_cam=view_cam, ground_truth_image=ground_truth_image, render_func=rasterizer.render_room_view, step=step)
-                
-                if gaussians.xyz.shape[0] != old_count:
-                    from main import update_optimizer
-                    gaussians_optim = update_optimizer(gaussians_optim, gaussians.parameters(), lr=0.001)
+                    view_cam = ViewCamera(H, W, K, c2w)
+                    old_count = gaussians.xyz.shape[0]
+                    loss, _ = co_optimizer.step(view_cam=view_cam, ground_truth_image=ground_truth_image, render_func=rasterizer.render_room_view, step=step)
+                    
+                    if gaussians.xyz.shape[0] != old_count:
+                        from main import update_optimizer
+                        gaussians_optim = update_optimizer(gaussians_optim, gaussians.parameters(), lr=0.001)
 
-                gaussians_optim.step()
+                    gaussians_optim.step()
+                    consecutive_failures = 0  # Reset on success
+                except RuntimeError as step_err:
+                    consecutive_failures += 1
+                    self.log.emit(f"  [WARNING] Step {step} failed: {str(step_err)[:120]}")
+                    if consecutive_failures >= max_consecutive_failures:
+                        self.log.emit(f"  [FATAL] {max_consecutive_failures} consecutive failures. Saving and stopping.")
+                        torch.save(nerf.state_dict(), ckpt_nerf_path)
+                        gaussians.save_checkpoint(ckpt_gauss_path)
+                        self.error.emit(f"Training stopped after {max_consecutive_failures} consecutive CUDA failures at step {step}. Checkpoint saved -- use Resume to continue.")
+                        self.finished_training.emit()
+                        return
+                    # Try to recover: clear CUDA cache and skip this step
+                    torch.cuda.empty_cache()
+                    self.log.emit(f"  Cleared CUDA cache. Retrying next step... ({consecutive_failures}/{max_consecutive_failures})")
+                    continue
                 
                 if step % 100 == 0:
                     self.log.emit(f"Step {step}/{num_steps} | Loss: {loss:.4f} | Splat Count: {gaussians.xyz.shape[0]} | SH: {gaussians.active_sh_degree}")
+                
+                # Auto-checkpoint every 500 steps to prevent progress loss
+                if step > 0 and step % 500 == 0:
+                    self.log.emit(f"  [Checkpoint] Auto-saving at step {step}...")
+                    torch.save(nerf.state_dict(), ckpt_nerf_path)
+                    gaussians.save_checkpoint(ckpt_gauss_path)
                 
                 # Update 3DGS Progress
                 if step % 50 == 0:
@@ -392,6 +420,10 @@ class PipelineTrainingThread(QThread):
             
             self.progress_3dgs.emit(100)
             self.eta.emit("ETA: Done")
+            
+            # Final save
+            torch.save(nerf.state_dict(), ckpt_nerf_path)
+            gaussians.save_checkpoint(ckpt_gauss_path)
             
             out_ply = os.path.join(output_dir, "point_cloud.ply")
             gaussians.save_ply(out_ply)
@@ -412,6 +444,14 @@ class PipelineTrainingThread(QThread):
             self.finished_training.emit()
 
         except Exception as e:
+            # Emergency checkpoint on ANY crash
+            try:
+                self.log.emit("[CRASH] Saving emergency checkpoint before exit...")
+                torch.save(nerf.state_dict(), ckpt_nerf_path)
+                gaussians.save_checkpoint(ckpt_gauss_path)
+                self.log.emit("[CRASH] Emergency checkpoint saved. Use 'Resume from Checkpoint' to continue.")
+            except Exception:
+                pass
             self.error.emit(f"Pipeline Error: {str(e)}")
 
 
@@ -557,7 +597,7 @@ class MainWindow(QMainWindow):
         lbl_epochs = QLabel("NeRF Epochs:")
         self.spin_epochs = QSpinBox()
         self.spin_epochs.setRange(1, 100)
-        self.spin_epochs.setValue(10)
+        self.spin_epochs.setValue(20)
         params_layout.addWidget(lbl_epochs)
         params_layout.addWidget(self.spin_epochs)
         

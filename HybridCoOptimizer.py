@@ -5,7 +5,7 @@ class HybridCoOptimizer:
     '''implements nerf directly to gaussian
     uses volumetric understanding of NeRF to guide the densification
     and pruning of 3DGS'''
-    def __init__(self,nerf_model,gaussian_model,grad_threshold=0.0002,density_threshold=10.0, prune_density_threshold=0.5, lambda_dssim=0.2):
+    def __init__(self,nerf_model,gaussian_model,grad_threshold=0.0002,density_threshold=0.5, prune_density_threshold=0.1, lambda_dssim=0.2):
         self.nerf=nerf_model
         self.gaussians=gaussian_model
         self.grad_threshold=grad_threshold
@@ -34,9 +34,15 @@ class HybridCoOptimizer:
         if step > 0 and step % 1000 == 0:
             self.gaussians.increase_sh_degree()
         
-        # Densification/Pruning: only after step 500, every 100 steps
+        # Opacity Reset: force Gaussians to re-earn visibility, prevents permanent blobs
+        if step > 0 and step % 3000 == 0:
+            with torch.no_grad():
+                print(f"  Opacity reset at step {step} -- forcing Gaussians to re-earn visibility")
+                self.gaussians._opacity.data.fill_(torch.logit(torch.tensor(0.01)).item())
+        
+        # Densification/Pruning: only after step 300, every 100 steps
         # This gives Gaussians time to settle before reshaping
-        if step >= 500 and step % 100 == 0:
+        if step >= 300 and step % 100 == 0:
             #Nerf Guided Densification
             with torch.no_grad():
                 grads=self.gaussians.xyz.grad

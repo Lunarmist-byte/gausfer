@@ -139,7 +139,7 @@ def main():
         trainer=NeRFTrainer(nerf, near=near, far=far)
         #Pre-Train
         print("warming up NeRF")
-        num_epochs = 1 if args.quick else 50
+        num_epochs = 5 if args.quick else 50
         for epoch in range(num_epochs):
             for i in range(len(dataset.images)):
                 img,poses=dataset.get_training_batch(i)

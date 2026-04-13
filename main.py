@@ -37,31 +37,44 @@ class ViewCamera:
 
         self.full_proj=proj@self.w2c
 
-def update_optimizer(optimizer, new_params_gen, lr):
-    old_state = optimizer.state.copy()
-    old_groups = optimizer.param_groups
+def update_optimizer(old_optimizer, new_param_groups):
+    """
+    Updates the optimizer with new parameter groups while preserving 
+    existing Adam state (momentum/variance) for surviving indices.
+    """
+    # Create the new optimizer with exactly the same global settings
+    new_optimizer = optim.Adam(new_param_groups, lr=0.0, eps=1e-15)
     
-    new_params = list(new_params_gen)
-    new_optimizer = optim.Adam(new_params, lr=lr)
-    
-    for old_group, new_group in zip(old_groups, new_optimizer.param_groups):
+    # Transfer state
+    for i, new_group in enumerate(new_optimizer.param_groups):
+        if i >= len(old_optimizer.param_groups):
+            continue
+            
+        old_group = old_optimizer.param_groups[i]
+        
         for old_p, new_p in zip(old_group['params'], new_group['params']):
-            if old_p in old_state:
-                state = old_state[old_p]
+            if old_p in old_optimizer.state:
+                state = old_optimizer.state[old_p]
                 new_state = {}
                 for k, v in state.items():
-                    if isinstance(v, torch.Tensor) and v.shape == old_p.shape:
+                    if isinstance(v, torch.Tensor):
                         if new_p.shape != old_p.shape:
-                            zeros = torch.zeros_like(new_p)
-                            min_len = min(old_p.shape[0], new_p.shape[0])
-                            zeros[:min_len] = v[:min_len]
-                            new_state[k] = zeros
+                            new_v = torch.zeros_like(new_p)
+                            # Only copy along the first dimension (point index)
+                            common_size = min(old_p.shape[0], new_p.shape[0])
+                            # Handle different shape ranks (some params might be [N, 1] or [N, 3])
+                            if len(v.shape) == 1:
+                                new_v[:common_size] = v[:common_size]
+                            elif len(v.shape) == 2:
+                                new_v[:common_size, :] = v[:common_size, :]
+                            elif len(v.shape) == 3:
+                                new_v[:common_size, :, :] = v[:common_size, :, :]
+                            new_state[k] = new_v
                         else:
                             new_state[k] = v.clone()
                     else:
                         new_state[k] = v
                 new_optimizer.state[new_p] = new_state
-    
     return new_optimizer
 
 def main():
@@ -164,7 +177,7 @@ def main():
             print("  Using Hybrid NeRF-to-Gaussian Bridge...")
             bridge = NeRFToGaussianBridge(nerf, bbox)
             seed_res = 128 if args.quick else 256
-            seed_threshold = 0.5 if args.quick else 15.0
+            seed_threshold = 0.5
             init_xyz_nerf, init_rgb_nerf = bridge.generate_initial_gaussians(resolution=seed_res, threshold=seed_threshold)
             gaussians.initialize_from_nerf(init_xyz_nerf, init_rgb_nerf)
             
@@ -172,9 +185,23 @@ def main():
         torch.save(nerf.state_dict(), ckpt_nerf_path)
         gaussians.save_checkpoint(ckpt_gauss_path)
     
-    # Higher LR for quick mode to converge faster
-    g_lr = 0.005 if args.quick else 0.001
-    gaussians_optim=optim.Adam(gaussians.parameters(),lr=g_lr)
+    # Calculate scene radius for LR scaling (standard 3DGS practice)
+    with torch.no_grad():
+        center = gaussians.xyz.mean(dim=0)
+        spatial_lr_scale = torch.norm(gaussians.xyz - center, dim=-1).max().item()
+        spatial_lr_scale = max(1.0, min(spatial_lr_scale, 20.0))
+    print(f"  Scaling parameters to scene radius: {spatial_lr_scale:.2f}")
+
+    # Per-parameter learning rates (critical for 3DGS quality)
+    param_groups = [
+        {"params": [gaussians._xyz], "lr": 0.00016 * spatial_lr_scale, "name": "xyz"},
+        {"params": [gaussians._features_dc], "lr": 0.0025, "name": "f_dc"},
+        {"params": [gaussians._features_rest], "lr": 0.000125, "name": "f_rest"},
+        {"params": [gaussians._opacity], "lr": 0.05, "name": "opacity"},
+        {"params": [gaussians._scaling], "lr": 0.005, "name": "scaling"},
+        {"params": [gaussians._rotation], "lr": 0.001, "name": "rotation"},
+    ]
+    gaussians_optim = optim.Adam(param_groups, lr=0.0, eps=1e-15)
     
     #Optimization Loop
     print("Optimizing...")
@@ -183,6 +210,13 @@ def main():
 
     num_steps = 500 if args.quick else 5000
     for step in range(num_steps):
+        # Exponential LR decay for positions (critical for high PSNR convergence)
+        progress = step / num_steps
+        current_xyz_lr = (0.00016 * spatial_lr_scale) * ((0.01) ** progress)
+        for param_group in gaussians_optim.param_groups:
+            if param_group["name"] == "xyz":
+                param_group["lr"] = current_xyz_lr
+
         gaussians_optim.zero_grad()
         #fetch sequentially
         idx=step%len(dataset.images)
@@ -193,14 +227,23 @@ def main():
         loss, rendered_image = co_optimizer.step(view_cam=view_cam,ground_truth_image=ground_truth_image,render_func=rasterizer.render_room_view, step=step)
         
         if gaussians.xyz.shape[0] != old_count:
-            # Update optimizer and preserve momentum for existing points
-            gaussians_optim = update_optimizer(gaussians_optim, gaussians.parameters(), g_lr)
+            # Rebuild optimizer with per-parameter LRs while preserving Adam state
+            param_groups = [
+                {"params": [gaussians._xyz], "lr": current_xyz_lr, "name": "xyz"},
+                {"params": [gaussians._features_dc], "lr": 0.0025, "name": "f_dc"},
+                {"params": [gaussians._features_rest], "lr": 0.000125, "name": "f_rest"},
+                {"params": [gaussians._opacity], "lr": 0.05, "name": "opacity"},
+                {"params": [gaussians._scaling], "lr": 0.005, "name": "scaling"},
+                {"params": [gaussians._rotation], "lr": 0.001, "name": "rotation"},
+            ]
+            gaussians_optim = update_optimizer(gaussians_optim, param_groups)
 
         #Apply graident updates
         gaussians_optim.step()
         
         if step % 10 == 0:
-            print(f"  [Gaussian] Step {step}/{num_steps} | Loss: {loss:.4f} | Splat Count: {gaussians.xyz.shape[0]} | SH Degree: {gaussians.active_sh_degree}")
+            image_filename = dataset.images[idx]['name']
+            print(f"Step {step}/{num_steps} | Loss: {loss:.4f} | View {idx} ({image_filename}) | Splats: {gaussians.xyz.shape[0]} | SH: {gaussians.active_sh_degree}")
 
     print("\n Full Room Reconstruction done")
     

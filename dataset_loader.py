@@ -40,8 +40,27 @@ class RoomDatasetLoader:
         img_data=self.images[index]
         cam_data=self.cameras[img_data['camera_id']]
         
-        #load and normalize
-        img_path=os.path.join(self.image_dir,img_data['name'])
+        # Load and normalize with robust path recovery
+        raw_name = img_data['name']
+        # Try primary path
+        img_path = os.path.join(self.image_dir, raw_name)
+        
+        # Robust Recovery: If primary fails, check likely fallback locations
+        if not os.path.exists(img_path):
+            # Fallback 1: Check in ./images/ folder relative to project root
+            fallback_images = os.path.join(os.getcwd(), 'images', os.path.basename(raw_name))
+            # Fallback 2: Check in current directory root
+            fallback_root = os.path.join(os.getcwd(), os.path.basename(raw_name))
+            
+            if os.path.exists(fallback_images):
+                img_path = fallback_images
+            elif os.path.exists(fallback_root):
+                img_path = fallback_root
+            else:
+                # If everything fails, raise a clear error with suggestions
+                raise FileNotFoundError(f"Could not find image '{raw_name}' in '{self.image_dir}' or fallbacks. "
+                                        f"Please ensure your images are in the './images' folder.")
+
         img_pil = Image.open(img_path).convert('RGB')
         
         # Initial intrinsic matrix parameters

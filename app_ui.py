@@ -348,7 +348,24 @@ class PipelineTrainingThread(QThread):
                 torch.save(nerf.state_dict(), ckpt_nerf_path)
                 gaussians.save_checkpoint(ckpt_gauss_path)
             
-            gaussians_optim = optim.Adam(gaussians.parameters(), lr=0.001)
+            # Calculate scene radius for LR scaling (standard 3DGS practice)
+            with torch.no_grad():
+                center = gaussians.xyz.mean(dim=0)
+                spatial_lr_scale = torch.norm(gaussians.xyz - center, dim=-1).max().item()
+                spatial_lr_scale = max(1.0, min(spatial_lr_scale, 20.0)) # Guard rails
+            self.log.emit(f"  Automatic Spatial Scale: {spatial_lr_scale:.2f}")
+
+            # Per-parameter learning rates (critical for 3DGS quality)
+            # Position LR is scaled by the scene radius
+            param_groups = [
+                {"params": [gaussians._xyz], "lr": 0.00016 * spatial_lr_scale, "name": "xyz"},
+                {"params": [gaussians._features_dc], "lr": 0.0025, "name": "f_dc"},
+                {"params": [gaussians._features_rest], "lr": 0.000125, "name": "f_rest"},
+                {"params": [gaussians._opacity], "lr": 0.05, "name": "opacity"},
+                {"params": [gaussians._scaling], "lr": 0.005, "name": "scaling"},
+                {"params": [gaussians._rotation], "lr": 0.001, "name": "rotation"},
+            ]
+            gaussians_optim = optim.Adam(param_groups, lr=0.0, eps=1e-15)
             self.log.emit("Starting Hybrid Co-Optimization...")
             co_optimizer = HybridCoOptimizer(nerf, gaussians)
             rasterizer = RoomRasterizerCUDA()
@@ -368,6 +385,14 @@ class PipelineTrainingThread(QThread):
                     break
                 
                 try:
+                    # Exponential LR decay for positions (critical for high PSNR convergence)
+                    progress = step / num_steps
+                    # Decay from (0.00016 * scale) down to (0.0000016 * scale)
+                    current_xyz_lr = (0.00016 * spatial_lr_scale) * ((0.01) ** progress)
+                    for param_group in gaussians_optim.param_groups:
+                        if param_group["name"] == "xyz":
+                            param_group["lr"] = current_xyz_lr
+
                     gaussians_optim.zero_grad()
                     idx = step % len(dataset.images)
                     ground_truth_image, (H, W, K, c2w) = dataset.get_training_batch(idx)
@@ -377,8 +402,18 @@ class PipelineTrainingThread(QThread):
                     loss, _ = co_optimizer.step(view_cam=view_cam, ground_truth_image=ground_truth_image, render_func=rasterizer.render_room_view, step=step)
                     
                     if gaussians.xyz.shape[0] != old_count:
+                        # Rebuild optimizer with per-parameter LRs after point count change
+                        # USING Robust update_optimizer from main to preserve Adam state
                         from main import update_optimizer
-                        gaussians_optim = update_optimizer(gaussians_optim, gaussians.parameters(), lr=0.001)
+                        param_groups = [
+                            {"params": [gaussians._xyz], "lr": current_xyz_lr, "name": "xyz"},
+                            {"params": [gaussians._features_dc], "lr": 0.0025, "name": "f_dc"},
+                            {"params": [gaussians._features_rest], "lr": 0.000125, "name": "f_rest"},
+                            {"params": [gaussians._opacity], "lr": 0.05, "name": "opacity"},
+                            {"params": [gaussians._scaling], "lr": 0.005, "name": "scaling"},
+                            {"params": [gaussians._rotation], "lr": 0.001, "name": "rotation"},
+                        ]
+                        gaussians_optim = update_optimizer(gaussians_optim, param_groups)
 
                     gaussians_optim.step()
                     consecutive_failures = 0  # Reset on success
@@ -597,7 +632,7 @@ class MainWindow(QMainWindow):
         lbl_epochs = QLabel("NeRF Epochs:")
         self.spin_epochs = QSpinBox()
         self.spin_epochs.setRange(1, 100)
-        self.spin_epochs.setValue(20)
+        self.spin_epochs.setValue(30)
         params_layout.addWidget(lbl_epochs)
         params_layout.addWidget(self.spin_epochs)
         
@@ -605,7 +640,7 @@ class MainWindow(QMainWindow):
         self.spin_steps = QSpinBox()
         self.spin_steps.setRange(100, 50000)
         self.spin_steps.setSingleStep(100)
-        self.spin_steps.setValue(5000)
+        self.spin_steps.setValue(15000)
         params_layout.addWidget(lbl_steps)
         params_layout.addWidget(self.spin_steps)
         

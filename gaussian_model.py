@@ -132,16 +132,19 @@ class GaussianModel(nn.Module):
             self._scaling.data[split_mask] -= torch.log(torch.tensor(1.6, device='cuda'))
             split_scaling = self._scaling[split_mask]
             
-            # Add displacement for new points
+            # Add displacement for new points with safety guard
             std = torch.exp(split_scaling)
-            split_xyz_new = split_xyz + torch.randn_like(split_xyz) * std
+            # Prevent NaNs or extreme values from exploding
+            noise = torch.randn_like(split_xyz) * std
+            split_xyz_new = torch.nan_to_num(split_xyz + noise)
 
             new_xyz.append(split_xyz_new)
             new_features_dc.append(split_features_dc)
             new_features_rest.append(split_features_rest)
             new_scaling.append(split_scaling)
             new_rotation.append(split_rotation)
-            new_opacity.append(split_opacity)
+            # Reduce opacity of split points slightly (0.8x) to ensure overlap doesn't cause saturation
+            new_opacity.append(split_opacity - 0.223) # logit domain approx factor
 
         if new_xyz:
             self._xyz = Parameter(torch.cat([self._xyz] + new_xyz, dim=0).requires_grad_(True))
@@ -218,13 +221,41 @@ class GaussianModel(nn.Module):
         }, path)
 
     def load_checkpoint(self, path):
-        """Restores PyTorch state, dynamically re-sizing Parameters"""
+        """Restores PyTorch state, dynamically re-sizing Parameters with Self-Healing"""
         print(f"Loading Gaussian Checkpoint from {path}...")
         ckpt = torch.load(path)
-        self._xyz = Parameter(ckpt["_xyz"].requires_grad_(True))
-        self._features_dc = Parameter(ckpt["_features_dc"].requires_grad_(True))
-        self._features_rest = Parameter(ckpt["_features_rest"].requires_grad_(True))
-        self._scaling = Parameter(ckpt["_scaling"].requires_grad_(True))
-        self._rotation = Parameter(ckpt["_rotation"].requires_grad_(True))
-        self._opacity = Parameter(ckpt["_opacity"].requires_grad_(True))
+        
+        # Self-Healing: Check for NaNs/Infs
+        xyz = ckpt["_xyz"]
+        nan_mask = torch.isnan(xyz).any(dim=-1)
+        inf_mask = torch.isinf(xyz).any(dim=-1)
+        invalid_mask = nan_mask | inf_mask
+        
+        if invalid_mask.any():
+            print(f"  [Safety] Found {invalid_mask.sum().item()} points with NaNs/Infs. Scrubbing...")
+            clean_mask = ~invalid_mask
+            for key in ckpt.keys():
+                ckpt[key] = ckpt[key][clean_mask]
+        
+        # Self-Healing: Cap oversized points that cause rasterizer crashes
+        scales = ckpt["_scaling"]
+        oversized_mask = (torch.max(scales, dim=-1).values > 0.5) # World space log(exp(0.5))
+        if oversized_mask.any():
+            print(f"  [Safety] Flattening {oversized_mask.sum().item()} oversized Gaussians.")
+            ckpt["_scaling"][oversized_mask] = -1.0 # Cap to approx exp(-1) = 0.36
+            
+        # VRAM Safety: If still too many points for stable resume, subsample
+        max_resume_points = 1000000
+        if ckpt["_xyz"].shape[0] > max_resume_points:
+            print(f"  [Safety] Checkpoint has {ckpt['_xyz'].shape[0]} points. Downsampling to {max_resume_points} for VRAM stability...")
+            indices = torch.randperm(ckpt["_xyz"].shape[0])[:max_resume_points]
+            for key in ckpt.keys():
+                ckpt[key] = ckpt[key][indices]
+
+        self._xyz = Parameter(ckpt["_xyz"].cuda().requires_grad_(True))
+        self._features_dc = Parameter(ckpt["_features_dc"].cuda().requires_grad_(True))
+        self._features_rest = Parameter(ckpt["_features_rest"].cuda().requires_grad_(True))
+        self._scaling = Parameter(ckpt["_scaling"].cuda().requires_grad_(True))
+        self._rotation = Parameter(ckpt["_rotation"].cuda().requires_grad_(True))
+        self._opacity = Parameter(ckpt["_opacity"].cuda().requires_grad_(True))
 

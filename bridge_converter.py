@@ -10,7 +10,7 @@ class NeRFToGaussianBridge:
         self.nerf=nerf_model
         self.bbox=bounding_box
         self.chunk_size=1024*64#edit if needed, to prevent memory overflow for gpu
-    def generate_initial_gaussians(self,resolution=256,threshold=15.0):
+    def generate_initial_gaussians(self,resolution=256,threshold=0.5):
         '''
         Samples room's volume in chunks to find solid surfaces
         '''
@@ -51,10 +51,10 @@ class NeRFToGaussianBridge:
         final_xyz = grid_coords[mask]
         final_colors = full_rgb[mask]
         
-        # Limit to 1 million points max to prevent OOM
-        if final_xyz.shape[0] > 1000000:
-             print(f"Cap reached: Subsampling {final_xyz.shape[0]} down to 1M points.")
-             indices = torch.randperm(final_xyz.shape[0])[:1000000]
+        # Limit to 200k points max to prevent OOM during co-optimization
+        if final_xyz.shape[0] > 200000:
+             print(f"Cap reached: Subsampling {final_xyz.shape[0]} down to 200k points.")
+             indices = torch.randperm(final_xyz.shape[0])[:200000]
              final_xyz = final_xyz[indices]
              final_colors = final_colors[indices]
 

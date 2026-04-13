@@ -20,14 +20,21 @@ class RoomRasterizerCUDA:
             prefiltered=False,
             debug=False
         )
+        # Create viewspace points tensor to capture gradients for densification
+        means2D = torch.zeros_like(gaussians.xyz, dtype=torch.float32, device='cuda', requires_grad=True)
+        try:
+            means2D.retain_grad()
+        except:
+            pass
+
         rasterizer=GaussianRasterizer(raster_settings=settings)
         rendered_image,radii=rasterizer(
             means3D=gaussians.xyz,
-            means2D=torch.zeros_like(gaussians.xyz,device='cuda'),
+            means2D=means2D,
             shs=gaussians.shs,
             colors_precomp=None,
             opacities=gaussians.opacity,
             scales=gaussians.scales,
             rotations=gaussians.rotations
         )
-        return {"render":rendered_image,"viewspace_points":radii}
+        return {"render":rendered_image, "viewspace_points": means2D, "radii": radii}

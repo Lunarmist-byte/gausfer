@@ -12,7 +12,12 @@ class GaussianModel(nn.Module):
     def __init__(self,sh_degree=3):
         super().__init__()
         self.max_sh_degree=sh_degree
-        self.active_sh_degree=0 # Start at degree 0 for stability
+        self.active_sh_degree=0 
+        # State for gradient accumulation (3DGS style)
+        self.xyz_gradient_accum = torch.empty(0)
+        self.denom = torch.empty(0)
+        self.max_radii2D = torch.empty(0)
+
         #core parameters that the Co-Optimizer will update
         self._xyz=torch.empty(0)
         self._features_dc=torch.empty(0)#Diffuse to Base RGB
@@ -22,27 +27,28 @@ class GaussianModel(nn.Module):
         self._opacity=torch.empty(0)
     def initialize_from_pcd(self, xyz, rgb, opacities=None):
         '''Initializes Gaussians directly from SfM point cloud for maximum reliability'''
-        # Hard cap: diff_gaussian_rasterization tile buffer cannot handle >50k splats safely
-        MAX_INIT_POINTS = 50000
+        # Hard cap: Safe limit for moderate VRAM (8GB+)
+        MAX_INIT_POINTS = 1000000
         if xyz.shape[0] > MAX_INIT_POINTS:
             indices = torch.randperm(xyz.shape[0], device=xyz.device)[:MAX_INIT_POINTS]
             xyz = xyz[indices]
             rgb = rgb[indices]
             if opacities is not None:
                 opacities = opacities[indices]
-            print(f"  Downsampled SfM seed from {xyz.shape[0]+MAX_INIT_POINTS} -> {MAX_INIT_POINTS} points to fit CUDA tile buffer.")
+            print(f"  Sampled SfM seed to {MAX_INIT_POINTS} points for performance.")
         print(f"Initializing {xyz.shape[0]} Gaussians from SfM Point Cloud...")
         self._initialize_params(xyz, rgb, opacities)
 
     def initialize_from_nerf(self, init_xyz, init_rgb):
         '''Takes dense point cloud extracted by bridge_converter.py and initializes the mathematical properties of Gaussians'''
-        MAX_INIT_POINTS = 50000
+        MAX_INIT_POINTS = 1000000
         if init_xyz.shape[0] > MAX_INIT_POINTS:
             indices = torch.randperm(init_xyz.shape[0], device=init_xyz.device)[:MAX_INIT_POINTS]
             init_xyz = init_xyz[indices]
             init_rgb = init_rgb[indices]
-            print(f"  Downsampled NeRF seed to {MAX_INIT_POINTS} points.")
+            print(f"  Sampled NeRF seed to {MAX_INIT_POINTS} points.")
         print(f"Initializing {init_xyz.shape[0]} Gaussians from NeRF Seed...")
+
         self._initialize_params(init_xyz, init_rgb)
 
     def _initialize_params(self, xyz, rgb, opacities=None):
@@ -122,6 +128,25 @@ class GaussianModel(nn.Module):
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
             print(f"  SH degree increased to {self.active_sh_degree}")
+
+    def constrain_parameters(self):
+        """Enforces hard physical constraints on Gaussians to prevent CUDA crashes"""
+        with torch.no_grad():
+            # 1. Scaling: Clamp to safe world-space range [exp(-10), exp(0.5)]
+            # exp(0.5) is ~1.6 world units - anything larger is usually a 'blob' error
+            self._scaling.data.clamp_(-10.0, 0.5)
+            
+            # 2. Rotation: Ensure quaternions stay normalized for correct rotation math
+            self._rotation.data.copy_(torch.nn.functional.normalize(self._rotation.data))
+            
+            # 3. Opacity: Clamp logit domain to prevent sigmoid saturation/NaNs
+            # logit(0.0001) ~ -9.2, logit(0.999) ~ 6.9
+            self._opacity.data.clamp_(-10.0, 10.0)
+            
+            # 4. NaN/Inf Scrubbing: Zero out any bad values that somehow slipped in
+            for param in [self._xyz, self._features_dc, self._features_rest, self._scaling, self._rotation, self._opacity]:
+                if not torch.isfinite(param.data).all():
+                    param.data.copy_(torch.nan_to_num(param.data))
     
     def densify_clone_split(self, clone_mask, split_mask):
         new_xyz = []
@@ -175,6 +200,9 @@ class GaussianModel(nn.Module):
             self._scaling = Parameter(torch.cat([self._scaling] + new_scaling, dim=0).requires_grad_(True))
             self._rotation = Parameter(torch.cat([self._rotation] + new_rotation, dim=0).requires_grad_(True))
             self._opacity = Parameter(torch.cat([self._opacity] + new_opacity, dim=0).requires_grad_(True))
+            
+            # Enforce constraints on new points immediately
+            self.constrain_parameters()
             return True
         return False
 
@@ -189,6 +217,7 @@ class GaussianModel(nn.Module):
         self._rotation=Parameter(self._rotation[keep_mask].requires_grad_(True))
         self._opacity=Parameter(self._opacity[keep_mask].requires_grad_(True))
 
+        self.constrain_parameters()
         return True
 
     def construct_list_of_attributes(self):

@@ -34,12 +34,21 @@ class RoomRasterizerCUDA:
         opacities = gaussians.opacity
         shs = gaussians.shs
 
+        # Comprehensive FINITE checks
         if not torch.isfinite(xyz).all():
-            raise RuntimeError(f"NaN/Inf detected in Gaussian XYZ positions ({(~torch.isfinite(xyz)).sum()} bad points). Densification may have exploded.")
+            raise RuntimeError(f"NaN/Inf in XYZ positions")
         if not torch.isfinite(scales).all():
-            raise RuntimeError(f"NaN/Inf detected in Gaussian scales. Clamping and retrying.")
+            raise RuntimeError(f"NaN/Inf in scales")
         if not torch.isfinite(rotations).all():
-            raise RuntimeError(f"NaN/Inf detected in Gaussian rotations.")
+            raise RuntimeError(f"NaN/Inf in rotations")
+        if not torch.isfinite(opacities).all():
+            raise RuntimeError(f"NaN/Inf in opacities")
+        if not torch.isfinite(shs).all():
+            raise RuntimeError(f"NaN/Inf in SH coefficients")
+            
+        # Hard Scale check: extremely large splats kill the tile rasterizer
+        if (scales > 5.0).any():
+            raise RuntimeError(f"Explosive Gaussian scale detected (>5.0 world units)")
 
         rasterizer=GaussianRasterizer(raster_settings=settings)
         rendered_image,radii=rasterizer(

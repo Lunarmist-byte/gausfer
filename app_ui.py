@@ -3,6 +3,9 @@ import os
 import cv2
 import tempfile
 import torch
+import traceback
+from datetime import datetime
+
 import torch.optim as optim
 import numpy as np
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
@@ -385,9 +388,12 @@ class PipelineTrainingThread(QThread):
                     break
                 
                 try:
-                    # Exponential LR decay for positions (critical for high PSNR convergence)
+                    # 0. Safety Guard: Enforce physical constraints BEFORE any CUDA call
+                    # This prevents the rasterizer from even seeing 'explosive' parameters
+                    gaussians.constrain_parameters()
+                    
+                    # 1. Exponential LR decay for positions
                     progress = step / num_steps
-                    # Decay from (0.00016 * scale) down to (0.0000016 * scale)
                     current_xyz_lr = (0.00016 * spatial_lr_scale) * ((0.01) ** progress)
                     for param_group in gaussians_optim.param_groups:
                         if param_group["name"] == "xyz":
@@ -397,20 +403,11 @@ class PipelineTrainingThread(QThread):
                     idx = step % len(dataset.images)
                     ground_truth_image, (H, W, K, c2w) = dataset.get_training_batch(idx)
 
-                    # Proactive NaN guard: clamp any bad xyz before rendering
-                    with torch.no_grad():
-                        nan_pre = ~torch.isfinite(gaussians._xyz.data).all(dim=-1)
-                        if nan_pre.any():
-                            gaussians.prune_points(nan_pre)
-                            self.log.emit(f"  [GUARD] Pruned {nan_pre.sum().item()} pre-existing NaN splats at step {step}.")
-
                     view_cam = ViewCamera(H, W, K, c2w)
                     old_count = gaussians.xyz.shape[0]
                     loss, _ = co_optimizer.step(view_cam=view_cam, ground_truth_image=ground_truth_image, render_func=rasterizer.render_room_view, step=step)
                     
                     if gaussians.xyz.shape[0] != old_count:
-                        # Add VRAM clear after densification/pruning to stabilize memory
-                        torch.cuda.empty_cache()
                         # Rebuild optimizer with per-parameter LRs after point count change
                         from main import update_optimizer
                         param_groups = [
@@ -422,24 +419,22 @@ class PipelineTrainingThread(QThread):
                             {"params": [gaussians._rotation], "lr": 0.001, "name": "rotation"},
                         ]
                         gaussians_optim = update_optimizer(gaussians_optim, param_groups)
+                        torch.cuda.empty_cache() # Stabilize memory after growth
 
                     gaussians_optim.step()
-                    consecutive_failures = 0  # Reset on success
-                except RuntimeError as step_err:
+                    consecutive_failures = 0  
+                except (RuntimeError, Exception) as step_err:
                     torch.cuda.empty_cache()
                     err_msg = str(step_err)
                     
-                    # --- Active NaN Recovery ---
-                    # If Gaussians exploded (NaN xyz), prune the bad ones and keep going
-                    with torch.no_grad():
-                        nan_mask = ~torch.isfinite(gaussians._xyz.data).all(dim=-1)
-                        n_nan = nan_mask.sum().item()
+                    # --- Comprehensive Rescue ---
+                    self.log.emit(f"  [RESCUE] Step {step} triggered error: {err_msg[:60]}")
                     
-                    if n_nan > 0:
-                        self.log.emit(f"  [RECOVER] Step {step}: Pruning {n_nan} NaN/Inf Gaussians after densification explosion.")
-                        with torch.no_grad():
-                            gaussians.prune_points(nan_mask)
-                        # Reset optimizer to match new point count
+                    with torch.no_grad():
+                        # Force constraints to scrub NaNs/Infs that caused the crash
+                        gaussians.constrain_parameters()
+                        
+                        # Check if point count is still the same for optimizer safety
                         from main import update_optimizer
                         param_groups = [
                             {"params": [gaussians._xyz], "lr": current_xyz_lr, "name": "xyz"},
@@ -450,25 +445,31 @@ class PipelineTrainingThread(QThread):
                             {"params": [gaussians._rotation], "lr": 0.001, "name": "rotation"},
                         ]
                         gaussians_optim = update_optimizer(gaussians_optim, param_groups)
-                        # Reset co_optimizer accumulation buffers to new count
+                        
+                        # Reset co-optimization buffers to safe state
                         co_optimizer.xyz_gradient_accum = torch.zeros((gaussians.xyz.shape[0], 1), device='cuda')
                         co_optimizer.denom = torch.zeros((gaussians.xyz.shape[0], 1), device='cuda')
                         co_optimizer.max_radii2D = torch.zeros((gaussians.xyz.shape[0]), device='cuda')
-                        self.log.emit(f"  [RECOVER] Pruned NaN points. Resuming from step {step+1}...")
-                        consecutive_failures = 0  # NaN prune counts as recovery, not failure
-                        continue
-
-                    # Generic CUDA failure: count and eventually stop
+                    
                     consecutive_failures += 1
-                    self.log.emit(f"  [WARNING] Step {step} failed: {err_msg[:120]}")
+                    
+                    # Log to dedicated error file for deep diagnostics
+                    try:
+                        with open("error_report.log", "a") as f:
+                            f.write(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] STEP {step} FAILURE\n")
+                            f.write(f"Error: {err_msg}\n")
+                            f.write(traceback.format_exc())
+                            f.write("-" * 40 + "\n")
+                    except:
+                        pass
+
                     if consecutive_failures >= max_consecutive_failures:
-                        self.log.emit(f"  [FATAL] {max_consecutive_failures} consecutive failures. Saving and stopping.")
+                        self.log.emit(f"  [FATAL] Unrecoverable failure at step {step}. Check error_report.log for details.")
                         torch.save(nerf.state_dict(), ckpt_nerf_path)
                         gaussians.save_checkpoint(ckpt_gauss_path)
-                        self.error.emit(f"Training stopped after {max_consecutive_failures} consecutive CUDA failures at step {step}. Checkpoint saved -- use Resume to continue.")
+                        self.error.emit(f"Critical training failure at step {step}. State saved.")
                         self.finished_training.emit()
                         return
-                    self.log.emit(f"  Cleared CUDA cache. Retrying next step... ({consecutive_failures}/{max_consecutive_failures})")
                     continue
                 
                 if step % 10 == 0:

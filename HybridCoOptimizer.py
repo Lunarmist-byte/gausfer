@@ -68,18 +68,20 @@ class HybridCoOptimizer:
             # Radii tells us which points were actually visible/rendered
             visible_mask = radii > 0
             
-            # Use viewspace gradients for more accurate image-space error capture
+                # Use viewspace gradients for more accurate image-space error capture
             if viewspace_points.grad is not None:
-                # Norm of 2D gradients in screen space
-                v_grads = viewspace_points.grad[visible_mask]
+                # Clamp gradients to prevent NaNs/Infs before accumulation
+                # 3DGS-style normalization: norm of 2D screen-space gradient
+                v_grads = torch.nan_to_num(viewspace_points.grad[visible_mask])
                 v_grads_norm = torch.norm(v_grads[:, :2], dim=-1, keepdim=True)
                 
-                # Gradient Clamping to prevent NaNs
-                v_grads_norm = torch.clamp(v_grads_norm, max=0.1)
+                # Gradient Clamping to prevent NaNs from exploding parameters
+                v_grads_norm = torch.clamp(v_grads_norm, max=0.05) # Slightly more restrictive clamping
 
                 self.xyz_gradient_accum[visible_mask] += v_grads_norm
                 self.denom[visible_mask] += 1
                 self.max_radii2D[visible_mask] = torch.max(self.max_radii2D[visible_mask], radii[visible_mask].float())
+
 
         # SH Degree Warmup: increase every 1000 steps for gradual color complexity
         if step > 0 and step % 1000 == 0:
@@ -105,13 +107,15 @@ class HybridCoOptimizer:
                 if high_error_mask.any():
                     max_scales = torch.max(self.gaussians.scales, dim=1).values
                     # 3DGS Paper Rule: Split large ones, clone small ones
-                    # Using world-space scale comparison (was 0.01 - too aggressive, now 0.05)
-                    split_mask = high_error_mask & (max_scales > 0.05)
-                    clone_mask = high_error_mask & (max_scales <= 0.05)
+                    # Split large ones, clone small ones
+                    # Restore threshold to 0.01 for better detail
+                    split_mask = high_error_mask & (max_scales > 0.01)
+                    clone_mask = high_error_mask & (max_scales <= 0.01)
                     
-                    # Hard cap: never create more than 5000 new splats per densification step
-                    # Too many at once = VRAM spike = CUDA crash
-                    MAX_NEW_PER_STEP = 5000
+                    # Hard cap: raised to allow much higher density
+                    MAX_NEW_PER_STEP = 50000
+
+
                     if split_mask.sum() + clone_mask.sum() > MAX_NEW_PER_STEP:
                         # Prioritize the highest-error points
                         combined = high_error_mask.nonzero(as_tuple=True)[0]

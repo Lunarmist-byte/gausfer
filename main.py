@@ -57,7 +57,7 @@ def update_optimizer(old_optimizer, new_param_groups):
                 state = old_optimizer.state[old_p]
                 new_state = {}
                 for k, v in state.items():
-                    if isinstance(v, torch.Tensor):
+                    if isinstance(v, torch.Tensor) and k in ['exp_avg', 'exp_avg_sq']:
                         if new_p.shape != old_p.shape:
                             new_v = torch.zeros_like(new_p)
                             # Only copy along the first dimension (point index)
@@ -73,7 +73,9 @@ def update_optimizer(old_optimizer, new_param_groups):
                         else:
                             new_state[k] = v.clone()
                     else:
+                        # Non-buffer tensors (like 'step') or non-tensor state
                         new_state[k] = v
+
                 new_optimizer.state[new_p] = new_state
     return new_optimizer
 

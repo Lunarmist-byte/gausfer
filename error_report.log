@@ -1,0 +1,140 @@
+
+[2026-04-13 19:54:08] TEST LOG ENTRY
+Error: Test error message
+Traceback: (simulated)
+----------------------------------------
+
+[2026-04-13 19:55:28] STEP 501 FAILURE
+Error: a Tensor with 184776 elements cannot be converted to Scalar
+Traceback (most recent call last):
+  File "C:\Users\amals\Documents\Codeworks\gausfer\app_ui.py", line 424, in run
+    gaussians_optim.step()
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 385, in wrapper
+    out = func(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 76, in _use_grad
+    ret = func(self, *args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 166, in step
+    adam(
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 316, in adam
+    func(params,
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 565, in _multi_tensor_adam
+    bias_correction1 = [1 - beta1 ** _get_value(step) for step in device_state_steps]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 565, in <listcomp>
+    bias_correction1 = [1 - beta1 ** _get_value(step) for step in device_state_steps]
+                                     ^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 89, in _get_value
+    return x.item()
+           ^^^^^^^^
+RuntimeError: a Tensor with 184776 elements cannot be converted to Scalar
+----------------------------------------
+
+[2026-04-13 19:55:28] STEP 502 FAILURE
+Error: a Tensor with 184776 elements cannot be converted to Scalar
+Traceback (most recent call last):
+  File "C:\Users\amals\Documents\Codeworks\gausfer\app_ui.py", line 424, in run
+    gaussians_optim.step()
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 385, in wrapper
+    out = func(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 76, in _use_grad
+    ret = func(self, *args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 166, in step
+    adam(
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 316, in adam
+    func(params,
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 565, in _multi_tensor_adam
+    bias_correction1 = [1 - beta1 ** _get_value(step) for step in device_state_steps]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 565, in <listcomp>
+    bias_correction1 = [1 - beta1 ** _get_value(step) for step in device_state_steps]
+                                     ^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 89, in _get_value
+    return x.item()
+           ^^^^^^^^
+RuntimeError: a Tensor with 184776 elements cannot be converted to Scalar
+----------------------------------------
+
+[2026-04-13 19:55:28] STEP 503 FAILURE
+Error: a Tensor with 184776 elements cannot be converted to Scalar
+Traceback (most recent call last):
+  File "C:\Users\amals\Documents\Codeworks\gausfer\app_ui.py", line 424, in run
+    gaussians_optim.step()
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 385, in wrapper
+    out = func(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 76, in _use_grad
+    ret = func(self, *args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 166, in step
+    adam(
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 316, in adam
+    func(params,
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 565, in _multi_tensor_adam
+    bias_correction1 = [1 - beta1 ** _get_value(step) for step in device_state_steps]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 565, in <listcomp>
+    bias_correction1 = [1 - beta1 ** _get_value(step) for step in device_state_steps]
+                                     ^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 89, in _get_value
+    return x.item()
+           ^^^^^^^^
+RuntimeError: a Tensor with 184776 elements cannot be converted to Scalar
+----------------------------------------
+
+[2026-04-13 19:55:28] STEP 504 FAILURE
+Error: a Tensor with 184776 elements cannot be converted to Scalar
+Traceback (most recent call last):
+  File "C:\Users\amals\Documents\Codeworks\gausfer\app_ui.py", line 424, in run
+    gaussians_optim.step()
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 385, in wrapper
+    out = func(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 76, in _use_grad
+    ret = func(self, *args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 166, in step
+    adam(
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 316, in adam
+    func(params,
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 565, in _multi_tensor_adam
+    bias_correction1 = [1 - beta1 ** _get_value(step) for step in device_state_steps]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 565, in <listcomp>
+    bias_correction1 = [1 - beta1 ** _get_value(step) for step in device_state_steps]
+                                     ^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 89, in _get_value
+    return x.item()
+           ^^^^^^^^
+RuntimeError: a Tensor with 184776 elements cannot be converted to Scalar
+----------------------------------------
+
+[2026-04-13 19:55:29] STEP 505 FAILURE
+Error: a Tensor with 184776 elements cannot be converted to Scalar
+Traceback (most recent call last):
+  File "C:\Users\amals\Documents\Codeworks\gausfer\app_ui.py", line 424, in run
+    gaussians_optim.step()
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 385, in wrapper
+    out = func(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 76, in _use_grad
+    ret = func(self, *args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 166, in step
+    adam(
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 316, in adam
+    func(params,
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 565, in _multi_tensor_adam
+    bias_correction1 = [1 - beta1 ** _get_value(step) for step in device_state_steps]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\adam.py", line 565, in <listcomp>
+    bias_correction1 = [1 - beta1 ** _get_value(step) for step in device_state_steps]
+                                     ^^^^^^^^^^^^^^^^
+  File "C:\Users\amals\Documents\Codeworks\gausfer\venv\Lib\site-packages\torch\optim\optimizer.py", line 89, in _get_value
+    return x.item()
+           ^^^^^^^^
+RuntimeError: a Tensor with 184776 elements cannot be converted to Scalar
+----------------------------------------

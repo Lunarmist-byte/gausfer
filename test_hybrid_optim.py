@@ -4,68 +4,78 @@ from gaussian_model import GaussianModel
 from HybridCoOptimizer import HybridCoOptimizer
 from main import update_optimizer
 
-class DummyNeRF:
+class DummyNeRF(torch.nn.Module):
     def __init__(self):
-        pass
-    def __call__(self, xyz):
+        super().__init__()
+    def forward(self, xyz):
         # returns density > 0.1 for all
         return torch.ones((xyz.shape[0], 4), device='cuda') * 25.0
 
 def main():
+    torch.manual_seed(42)
     gaussians = GaussianModel(sh_degree=1)
+    
     # Init 100 points
     xyz = torch.rand((100, 3), device='cuda')
     rgb = torch.rand((100, 3), device='cuda')
     gaussians.initialize_from_nerf(xyz, rgb)
     
-    gaussians.xyz.retain_grad()
-    gaussians.scales.retain_grad()
-    
-    # Simulate some gradients
-    optimizer = optim.Adam(gaussians.parameters(), lr=0.01)
-    
-    # We need a grad to trigger densification
-    loss = gaussians.xyz.sum() + gaussians.scales.sum()
-    loss.backward()
-    
-    # artificially inflate grads to pass threshold
-    gaussians.xyz.grad = torch.ones_like(gaussians.xyz) * 1.0
-    
-    # artificially set scales
-    gaussians._scaling.data[:50] = torch.log(torch.tensor(0.2, device='cuda'))
-    gaussians._scaling.data[50:] = torch.log(torch.tensor(0.01, device='cuda'))
-    
+    # Verify constraints on init
+    gaussians.constrain_parameters()
+    print("Initial constraints applied.")
+
     nerf = DummyNeRF()
-    co_optimizer = HybridCoOptimizer(nerf, gaussians, grad_threshold=0.5, density_threshold=10.0)
+    co_optimizer = HybridCoOptimizer(nerf, gaussians, grad_threshold=0.5)
     
-    old_count = gaussians.xyz.shape[0]
-    print(f"Old count: {old_count}")
+    # Simulate a step to populate gradients
+    print(f"Old count: {gaussians.xyz.shape[0]}")
     
+    # Manually trigger densification logic to test safety
+    # In a real run, this happens inside co_optimizer.step()
+    # We'll simulate the state co_optimizer.step() would produce
+    co_optimizer.xyz_gradient_accum.fill_(1.0) # High error
+    co_optimizer.denom.fill_(1.0)
+    
+    # Set some large scales to test splitting
     with torch.no_grad():
-        grads = gaussians.xyz.grad
-        high_error_mask = torch.norm(grads,dim=-1) > co_optimizer.grad_threshold
-        problematic_xyz = gaussians.xyz[high_error_mask]
-        nerf_density = torch.relu(nerf(problematic_xyz)[...,3])
-        valid_split_mask = nerf_density > co_optimizer.density_threshold
+        gaussians._scaling.data[:10] = 0.4 # Will be split
+        gaussians._scaling.data[10:20] = -5.0 # Will be cloned
         
-        combined_mask = torch.zeros_like(high_error_mask)
-        combined_mask[high_error_mask] = valid_split_mask
-        
-        max_scales = torch.max(gaussians.scales, dim=1).values
-        
-        split_mask = combined_mask & (max_scales > 0.1)
-        clone_mask = combined_mask & (max_scales <= 0.1)
-        
-        print(f"Split mask count: {split_mask.sum()}")
-        print(f"Clone mask count: {clone_mask.sum()}")
-        
-        gaussians.densify_clone_split(clone_mask, split_mask)
-        
-    new_count = gaussians.xyz.shape[0]
-    print(f"New count: {new_count}")
+    # Trigger densification
+    clone_mask = torch.zeros(gaussians.xyz.shape[0], dtype=torch.bool, device='cuda')
+    split_mask = torch.zeros(gaussians.xyz.shape[0], dtype=torch.bool, device='cuda')
     
-    optimizer = update_optimizer(optimizer, gaussians.parameters(), 0.01)
-    print("Optimizer updated successfully")
+    # Manually pick points
+    clone_mask[10:20] = True
+    split_mask[:10] = True
     
+    print(f"Triggering densification: {clone_mask.sum().item()} clones, {split_mask.sum().item()} splits")
+    gaussians.densify_clone_split(clone_mask, split_mask)
+    
+    print(f"New count: {gaussians.xyz.shape[0]}")
+    
+    # Verify constraints after densification
+    for name, param in [("xyz", gaussians._xyz), ("scaling", gaussians._scaling), ("rotation", gaussians._rotation)]:
+        if not torch.isfinite(param.data).all():
+            print(f"ERROR: {name} contains non-finite values!")
+        else:
+            print(f"SUCCESS: {name} is finite.")
+            
+    print("Scaling range:", gaussians._scaling.data.min().item(), "to", gaussians._scaling.data.max().item())
+    
+    # Verify optimizer update logic
+    param_groups = [
+        {"params": [gaussians._xyz], "lr": 0.001, "name": "xyz"},
+        {"params": [gaussians._features_dc], "lr": 0.0025, "name": "f_dc"},
+        {"params": [gaussians._features_rest], "lr": 0.000125, "name": "f_rest"},
+        {"params": [gaussians._opacity], "lr": 0.05, "name": "opacity"},
+        {"params": [gaussians._scaling], "lr": 0.005, "name": "scaling"},
+        {"params": [gaussians._rotation], "lr": 0.001, "name": "rotation"},
+    ]
+    dummy_optim = optim.Adam(param_groups, lr=0.0)
+    new_optim = update_optimizer(dummy_optim, param_groups)
+    print("Optimizer updated successfully.")
+
 if __name__ == "__main__":
     main()
+

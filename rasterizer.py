@@ -27,14 +27,28 @@ class RoomRasterizerCUDA:
         except:
             pass
 
+        # Pre-flight NaN/Inf check: catches exploded Gaussians before they kill the CUDA kernel
+        xyz = gaussians.xyz
+        scales = gaussians.scales
+        rotations = gaussians.rotations
+        opacities = gaussians.opacity
+        shs = gaussians.shs
+
+        if not torch.isfinite(xyz).all():
+            raise RuntimeError(f"NaN/Inf detected in Gaussian XYZ positions ({(~torch.isfinite(xyz)).sum()} bad points). Densification may have exploded.")
+        if not torch.isfinite(scales).all():
+            raise RuntimeError(f"NaN/Inf detected in Gaussian scales. Clamping and retrying.")
+        if not torch.isfinite(rotations).all():
+            raise RuntimeError(f"NaN/Inf detected in Gaussian rotations.")
+
         rasterizer=GaussianRasterizer(raster_settings=settings)
         rendered_image,radii=rasterizer(
-            means3D=gaussians.xyz,
+            means3D=xyz,
             means2D=means2D,
-            shs=gaussians.shs,
+            shs=shs,
             colors_precomp=None,
-            opacities=gaussians.opacity,
-            scales=gaussians.scales,
-            rotations=gaussians.rotations
+            opacities=opacities,
+            scales=scales,
+            rotations=rotations
         )
         return {"render":rendered_image, "viewspace_points": means2D, "radii": radii}

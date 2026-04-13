@@ -30,7 +30,7 @@ class HybridCoOptimizer:
         radii = render_pkg["radii"]
         
         #calculate rasterization loss
-        l1_loss=torch.nn.functional.l1_loss(rendered_image,ground_truth_image)
+        l1_loss = torch.nn.functional.l1_loss(rendered_image, ground_truth_image)
         
         # calculate ssim loss
         # ssim expects [B, C, H, W]
@@ -38,6 +38,10 @@ class HybridCoOptimizer:
         img2 = ground_truth_image.permute(2,0,1).unsqueeze(0)
         ssim_loss = 1.0 - ssim(img1, img2)
         
+        # Ensure losses are scalars (handles accidental broadcasting)
+        if l1_loss.dim() > 0: l1_loss = l1_loss.mean()
+        if ssim_loss.dim() > 0: ssim_loss = ssim_loss.mean()
+
         loss = (1.0 - self.lambda_dssim) * l1_loss + self.lambda_dssim * ssim_loss
         loss.backward()
         
@@ -101,9 +105,23 @@ class HybridCoOptimizer:
                 if high_error_mask.any():
                     max_scales = torch.max(self.gaussians.scales, dim=1).values
                     # 3DGS Paper Rule: Split large ones, clone small ones
-                    # Using world-space scale comparison
-                    split_mask = high_error_mask & (max_scales > 0.01)
-                    clone_mask = high_error_mask & (max_scales <= 0.01)
+                    # Using world-space scale comparison (was 0.01 - too aggressive, now 0.05)
+                    split_mask = high_error_mask & (max_scales > 0.05)
+                    clone_mask = high_error_mask & (max_scales <= 0.05)
+                    
+                    # Hard cap: never create more than 5000 new splats per densification step
+                    # Too many at once = VRAM spike = CUDA crash
+                    MAX_NEW_PER_STEP = 5000
+                    if split_mask.sum() + clone_mask.sum() > MAX_NEW_PER_STEP:
+                        # Prioritize the highest-error points
+                        combined = high_error_mask.nonzero(as_tuple=True)[0]
+                        top_indices = avg_grads.squeeze()[combined].topk(MAX_NEW_PER_STEP).indices
+                        selected = combined[top_indices]
+                        new_split = torch.zeros_like(split_mask)
+                        new_clone = torch.zeros_like(clone_mask)
+                        new_split[selected] = split_mask[selected]
+                        new_clone[selected] = clone_mask[selected]
+                        split_mask, clone_mask = new_split, new_clone
                     
                     n_clone = clone_mask.sum().item()
                     n_split = split_mask.sum().item()
@@ -133,4 +151,6 @@ class HybridCoOptimizer:
                         print(f"  Pruning {n_prune} points (Opacity: {opacity_mask.sum().item()}, Size: {size_mask.sum().item()})")
                         self.gaussians.prune_points(prune_mask)
         
-        return loss.item(), rendered_image
+        # Final scalar safety check
+        loss_val = loss.item() if loss.dim() == 0 else loss.mean().item()
+        return loss_val, rendered_image

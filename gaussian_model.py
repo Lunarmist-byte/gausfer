@@ -22,11 +22,26 @@ class GaussianModel(nn.Module):
         self._opacity=torch.empty(0)
     def initialize_from_pcd(self, xyz, rgb, opacities=None):
         '''Initializes Gaussians directly from SfM point cloud for maximum reliability'''
+        # Hard cap: diff_gaussian_rasterization tile buffer cannot handle >50k splats safely
+        MAX_INIT_POINTS = 50000
+        if xyz.shape[0] > MAX_INIT_POINTS:
+            indices = torch.randperm(xyz.shape[0], device=xyz.device)[:MAX_INIT_POINTS]
+            xyz = xyz[indices]
+            rgb = rgb[indices]
+            if opacities is not None:
+                opacities = opacities[indices]
+            print(f"  Downsampled SfM seed from {xyz.shape[0]+MAX_INIT_POINTS} -> {MAX_INIT_POINTS} points to fit CUDA tile buffer.")
         print(f"Initializing {xyz.shape[0]} Gaussians from SfM Point Cloud...")
         self._initialize_params(xyz, rgb, opacities)
 
     def initialize_from_nerf(self, init_xyz, init_rgb):
         '''Takes dense point cloud extracted by bridge_converter.py and initializes the mathematical properties of Gaussians'''
+        MAX_INIT_POINTS = 50000
+        if init_xyz.shape[0] > MAX_INIT_POINTS:
+            indices = torch.randperm(init_xyz.shape[0], device=init_xyz.device)[:MAX_INIT_POINTS]
+            init_xyz = init_xyz[indices]
+            init_rgb = init_rgb[indices]
+            print(f"  Downsampled NeRF seed to {MAX_INIT_POINTS} points.")
         print(f"Initializing {init_xyz.shape[0]} Gaussians from NeRF Seed...")
         self._initialize_params(init_xyz, init_rgb)
 
@@ -49,7 +64,10 @@ class GaussianModel(nn.Module):
         self._xyz = Parameter(xyz.requires_grad_(True))
         self._features_dc = Parameter(f_dc.unsqueeze(1).requires_grad_(True))
         
-        features_rest = torch.zeros((xyz.shape[0], (self.max_sh_degree + 1) ** 2 - 1, 3), device='cuda')
+        # Allocate rest SH only for active degree (0 at start = zero extra VRAM)
+        # Will be expanded when increase_sh_degree() is called
+        n_rest = (self.max_sh_degree + 1) ** 2 - 1
+        features_rest = torch.zeros((xyz.shape[0], n_rest, 3), device='cuda')
         self._features_rest = Parameter(features_rest.requires_grad_(True))
         
         self._scaling = Parameter(scales.requires_grad_(True))
@@ -128,15 +146,19 @@ class GaussianModel(nn.Module):
             split_rotation = self._rotation[split_mask]
             split_opacity = self._opacity[split_mask]
             
-            # Shrink existing
+            # Shrink existing splats before splitting
             self._scaling.data[split_mask] -= torch.log(torch.tensor(1.6, device='cuda'))
+            # Hard-clamp in log-space: exp(-6)=0.002, exp(1)=2.7 max world units
+            self._scaling.data.clamp_(-6.0, 1.0)
             split_scaling = self._scaling[split_mask]
             
-            # Add displacement for new points with safety guard
-            std = torch.exp(split_scaling)
-            # Prevent NaNs or extreme values from exploding
+            # Add displacement for new points - clamp std to prevent explosion
+            std = torch.exp(split_scaling).clamp(max=0.5)
             noise = torch.randn_like(split_xyz) * std
-            split_xyz_new = torch.nan_to_num(split_xyz + noise)
+            split_xyz_new = split_xyz + noise
+            # Guard: replace any NaN/Inf positions with the original xyz
+            bad_mask = ~torch.isfinite(split_xyz_new).all(dim=-1)
+            split_xyz_new[bad_mask] = split_xyz[bad_mask]
 
             new_xyz.append(split_xyz_new)
             new_features_dc.append(split_features_dc)

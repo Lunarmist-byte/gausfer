@@ -133,7 +133,7 @@ class GaussianVisualizer(QWidget):
             scale_modifier=self.scale_modifier,
             viewmatrix=view_cam.w2c.cuda().mT,
             projmatrix=view_cam.full_proj.cuda().mT,
-            sh_degree=3,
+            sh_degree=gaussians.active_sh_degree,
             campos=view_cam.pos.cuda(),
             prefiltered=False,
             debug=False
@@ -332,6 +332,7 @@ class PipelineTrainingThread(QThread):
                             
                     self.log.emit(f"NeRF Epoch {epoch} Loss: {loss:.4f}")
                     self.progress_nerf.emit(int(((epoch + 1) / num_epochs) * 100))
+                    trainer.step_scheduler() # Decay learning rate
                 
                 # 3. Phase: Bridging and 3DGS
                 self.progress_3dgs.emit(5)
@@ -348,10 +349,8 @@ class PipelineTrainingThread(QThread):
                 gaussians.save_checkpoint(ckpt_gauss_path)
             
             gaussians_optim = optim.Adam(gaussians.parameters(), lr=0.001)
-            # Match main.py's aggressive pruning threshold
-            prune_threshold = 1.5
-            self.log.emit(f"Starting Hybrid Co-Optimization (Prune Threshold: {prune_threshold})...")
-            co_optimizer = HybridCoOptimizer(nerf, gaussians, prune_density_threshold=prune_threshold)
+            self.log.emit("Starting Hybrid Co-Optimization...")
+            co_optimizer = HybridCoOptimizer(nerf, gaussians)
             rasterizer = RoomRasterizerCUDA()
 
             num_steps = self.num_steps
@@ -378,12 +377,6 @@ class PipelineTrainingThread(QThread):
                 
                 if step % 100 == 0:
                     self.log.emit(f"Step {step}/{num_steps} | Loss: {loss:.4f} | Splat Count: {gaussians.xyz.shape[0]} | SH: {gaussians.active_sh_degree}")
-                
-                 # Increment SH degree for detail warmup
-                if step > 0 and step % (num_steps // 4) == 0:
-                    if gaussians.active_sh_degree < gaussians.max_sh_degree:
-                        gaussians.active_sh_degree += 1
-                        self.log.emit(f"Detail Level Up: Increasing SH Degree to {gaussians.active_sh_degree}")
                 
                 # Update 3DGS Progress
                 if step % 50 == 0:

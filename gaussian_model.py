@@ -44,7 +44,7 @@ class GaussianModel(nn.Module):
 
         # Opacity
         if opacities is None:
-            opacities = torch.logit(torch.ones((xyz.shape[0], 1), device='cuda') * 0.1)
+            opacities = torch.logit(torch.ones((xyz.shape[0], 1), device='cuda') * 0.5)
 
         self._xyz = Parameter(xyz.requires_grad_(True))
         self._features_dc = Parameter(f_dc.unsqueeze(1).requires_grad_(True))
@@ -93,10 +93,17 @@ class GaussianModel(nn.Module):
         return torch.sigmoid(self._opacity).contiguous()
     @property
     def scales(self):
-        return torch.exp(self._scaling).contiguous()
+        # Clamp minimum scale to prevent Gaussians from collapsing to zero
+        return torch.clamp(torch.exp(self._scaling), min=1e-6).contiguous()
     @property
     def rotations(self):
         return torch.nn.functional.normalize(self._rotation).contiguous()
+    
+    def increase_sh_degree(self):
+        '''Gradually increase active SH degree for stable color warmup'''
+        if self.active_sh_degree < self.max_sh_degree:
+            self.active_sh_degree += 1
+            print(f"  SH degree increased to {self.active_sh_degree}")
     
     def densify_clone_split(self, clone_mask, split_mask):
         new_xyz = []

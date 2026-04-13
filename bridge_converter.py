@@ -24,9 +24,10 @@ class NeRFToGaussianBridge:
             chunk=grid_coords[i:i+self.chunk_size]
             with torch.no_grad():
                 predictions=self.nerf(chunk)
-                # Apply activations to match implicit rendering logic
+                # RGB is already sigmoid-clamped by the model
+                rgb=predictions[...,:3]
+                # Density is the 4th channel
                 density=torch.relu(predictions[...,3])
-                rgb=torch.sigmoid(predictions[...,:3])
                 
                 all_densities.append(density)
                 all_rgbs.append(rgb)

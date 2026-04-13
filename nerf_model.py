@@ -16,19 +16,32 @@ class RoomNeRF(nn.Module):
     """
     FR3:Volumetric scene Representation optimized for CUDA execution
     Designed to process encoded 3D spatial coordinates and viewing directions
+    Uses a skip connection at the midpoint for better geometry learning.
     """
     def __init__(self,num_freqs=10,hidden_dim=256):
         super().__init__()
         in_dim=3+2*3*num_freqs
         self.encoder=PositionalEncoding(num_freqs)
-        self.network=nn.Sequential(
+        # First half of the network
+        self.block1=nn.Sequential(
             nn.Linear(in_dim,hidden_dim),nn.ReLU(),
             nn.Linear(hidden_dim,hidden_dim),nn.ReLU(),
             nn.Linear(hidden_dim,hidden_dim),nn.ReLU(),
-            nn.Linear(hidden_dim,hidden_dim),nn.ReLU(),
-            nn.Linear(hidden_dim,4)#Output:RGB(3)+Density(1)
         ).cuda()
+        # Second half with skip connection (input encoding concatenated back in)
+        self.block2=nn.Sequential(
+            nn.Linear(hidden_dim+in_dim,hidden_dim),nn.ReLU(),
+            nn.Linear(hidden_dim,hidden_dim),nn.ReLU(),
+        ).cuda()
+        # Separate heads for density and RGB
+        self.density_head=nn.Linear(hidden_dim,1).cuda()
+        self.rgb_head=nn.Linear(hidden_dim,3).cuda()
     def forward(self,x):
         encoded_x=self.encoder(x)
-        return self.network(encoded_x)
+        h=self.block1(encoded_x)
+        # Skip connection: concatenate original encoding
+        h=self.block2(torch.cat([h,encoded_x],dim=-1))
+        density=self.density_head(h)
+        rgb=torch.sigmoid(self.rgb_head(h))#Clamped to [0,1]
+        return torch.cat([rgb,density],dim=-1)
     

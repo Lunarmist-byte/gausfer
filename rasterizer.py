@@ -15,7 +15,7 @@ class RoomRasterizerCUDA:
             scale_modifier=1.0,
             viewmatrix=camera.w2c.cuda().mT,
             projmatrix=camera.full_proj.cuda().mT,
-            sh_degree=3,
+            sh_degree=gaussians.active_sh_degree,
             campos=camera.pos.cuda(),
             prefiltered=False,
             debug=False
@@ -31,4 +31,3 @@ class RoomRasterizerCUDA:
             rotations=gaussians.rotations
         )
         return {"render":rendered_image,"viewspace_points":radii}
-    

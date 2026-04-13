@@ -7,10 +7,11 @@ class NeRFTrainer:
     def __init__(self,model,learning_rate=5e-4, near=0.1, far=10.0):
         self.model=model
         self.optimizer=optim.Adam(self.model.parameters(),lr=learning_rate)
+        self.scheduler=optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.995)
         self.chunk_size=1024#reduced for OOM
         self.near = near
         self.far = far
-        self.num_samples = 64
+        self.num_samples = 96
     def render_rays_in_chunks(self,rays_o,rays_d):
         '''
         Processes rays in smaller chunks to prevent CUDA out of memory errors when rendering high resolution room views'''
@@ -31,12 +32,13 @@ class NeRFTrainer:
             sampled_points=chunk_o.unsqueeze(1)+chunk_d.unsqueeze(1)*t_vals[None,:,None]
             predictions=self.model(sampled_points) # (C, S, 4)
             
-            rgb = predictions[..., :3] # (C, S, 3)
+            rgb = predictions[..., :3] # (C, S, 3) — already sigmoid-clamped by model
             density = torch.relu(predictions[..., 3]) # (C, S)
             
-            # Simple volume rendering (Alpha-blending)
+            # Volume rendering with alpha-blending
             alpha = 1.0 - torch.exp(-density * dists[None, :]) # (C, S)
-            weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1), device='cuda'), 1.-alpha + 1e-10], dim=-1), dim=-1)[:, :-1]
+            transmittance = torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1), device='cuda'), 1.-alpha + 1e-10], dim=-1), dim=-1)[:, :-1]
+            weights = alpha * transmittance
             
             rendered_rgb = torch.sum(weights.unsqueeze(-1) * rgb, dim=1) # (C, 3)
             all_rgb.append(rendered_rgb)
@@ -77,19 +79,26 @@ class NeRFTrainer:
         sampled_points = select_o.unsqueeze(1) + select_d.unsqueeze(1) * t_vals[None, :, None]
         predictions = self.model(sampled_points)
         
-        rgb = predictions[..., :3]
+        rgb = predictions[..., :3] # already sigmoid-clamped by model
         density = torch.relu(predictions[..., 3])
         
         alpha = 1.0 - torch.exp(-density * dists[None, :])
-        weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1), device='cuda'), 1.-alpha + 1e-10], dim=-1), dim=-1)[:, :-1]
+        transmittance = torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1), device='cuda'), 1.-alpha + 1e-10], dim=-1), dim=-1)[:, :-1]
+        weights = alpha * transmittance
         
         pred_rgb = torch.sum(weights.unsqueeze(-1) * rgb, dim=1)
         
         loss=torch.nn.functional.mse_loss(pred_rgb,target_rgb)#compute loss
         loss.backward()#update weights
+        # Gradient clipping for stability
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
 
         return loss.item()
+
+    def step_scheduler(self):
+        '''Call once per epoch to decay learning rate'''
+        self.scheduler.step()
     def _get_rays(self,H,W,K,c2w):
         '''calculates how physical light rays passing through the camera lens in the room
             Vectorized to run parallel on CUDA without slow loops

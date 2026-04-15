@@ -8,13 +8,10 @@ class HybridCoOptimizer:
     def __init__(self,nerf_model,gaussian_model,grad_threshold=0.0001,density_threshold=0.5, lambda_dssim=0.2):
         self.nerf=nerf_model
         self.gaussians=gaussian_model
-        # Gradient阈值 (tau_xyz in 3DGS paper)
         self.grad_threshold=grad_threshold
         self.density_threshold=density_threshold
         self.lambda_dssim=lambda_dssim
         self.min_points=1000 # Never prune below this count
-        
-        # State for gradient accumulation (3DGS style)
         self.xyz_gradient_accum = torch.zeros((self.gaussians.xyz.shape[0], 1), device='cuda')
         self.denom = torch.zeros((self.gaussians.xyz.shape[0], 1), device='cuda')
         self.max_radii2D = torch.zeros((self.gaussians.xyz.shape[0]), device='cuda')
@@ -22,10 +19,7 @@ class HybridCoOptimizer:
     def step(self,view_cam,ground_truth_image,render_func, step=0):
         #render the gaussians
         render_pkg=render_func(view_cam,self.gaussians)
-        rendered_image=render_pkg["render"].permute(1,2,0) # Change [3,H,W] to [H,W,3]
-        
-        # We need the 2D view-space coordinates and gradients for 3DGS style densification
-        # The rasterizer provides these in render_pkg
+        rendered_image=render_pkg["render"].permute(1,2,0)
         viewspace_points = render_pkg["viewspace_points"]
         radii = render_pkg["radii"]
         
@@ -44,10 +38,7 @@ class HybridCoOptimizer:
 
         loss = (1.0 - self.lambda_dssim) * l1_loss + self.lambda_dssim * ssim_loss
         loss.backward()
-        
-        # 3DGS-style Gradient Accumulation & State Management
         with torch.no_grad():
-            # Expansion Guard: Ensure buffers always match point count, even if no grad this step
             if self.xyz_gradient_accum.shape[0] != self.gaussians.xyz.shape[0]:
                 new_count = self.gaussians.xyz.shape[0]
                 old_count = self.xyz_gradient_accum.shape[0]
@@ -70,8 +61,6 @@ class HybridCoOptimizer:
             
                 # Use viewspace gradients for more accurate image-space error capture
             if viewspace_points.grad is not None:
-                # Clamp gradients to prevent NaNs/Infs before accumulation
-                # 3DGS-style normalization: norm of 2D screen-space gradient
                 v_grads = torch.nan_to_num(viewspace_points.grad[visible_mask])
                 v_grads_norm = torch.norm(v_grads[:, :2], dim=-1, keepdim=True)
                 
@@ -106,9 +95,6 @@ class HybridCoOptimizer:
                 
                 if high_error_mask.any():
                     max_scales = torch.max(self.gaussians.scales, dim=1).values
-                    # 3DGS Paper Rule: Split large ones, clone small ones
-                    # Split large ones, clone small ones
-                    # Restore threshold to 0.01 for better detail
                     split_mask = high_error_mask & (max_scales > 0.01)
                     clone_mask = high_error_mask & (max_scales <= 0.01)
                     

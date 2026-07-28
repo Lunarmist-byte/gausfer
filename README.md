@@ -2,7 +2,7 @@
 
 This repository implements a high-fidelity 3D reconstruction pipeline that bridges Neural Radiance Fields (NeRF) and 3D Gaussian Splatting (3DGS). The project focuses on utilizing the volumetric consistency of NeRF to initialize and refine high-density Gaussian primitives for real-time, room-scale rendering.
 
-## Key Features
+# Key Features
 
 - **Automated Pose Estimation**: Integrated COLMAP wrapper for Structure-from-Motion (SfM) to extract camera intrinsics and extrinsics.
 - **Volumetric Scene Representation**: A deep MLP-based NeRF implementation for predicting density and RGB from 3D coordinates.
@@ -11,36 +11,36 @@ This repository implements a high-fidelity 3D reconstruction pipeline that bridg
 - **Desktop Application Interface (PyQt6)**: A multithreaded GUI (`app_ui.py`) for managing video extraction, starting the training pipeline, and viewing real-time rendering logs.
 - **Intelligent Video Extraction**: A Streamlit tool (`data_capture_app.py`) for automated frame extraction, leveraging Laplacian variance to filter out blurry frames automatically.
 
-## Project Structure
+# Project Structure
 
 ### 1. Camera Pose Estimation (PoseEstimator)
 Uses COLMAP to perform feature extraction and exhaustive matching. This step is critical for recovering the camera parameters required for both NeRF training and Gaussian projection.
 
-### 2. Neural Radiance Field (RoomNeRF)
+# 2. Neural Radiance Field (RoomNeRF)
 A volumetric representation using a PyTorch-based MLP. Inputs: 5D coordinates (location x, y, z and viewing direction). Outputs: Volume density ($\sigma$) and emitted RGB color. Managed by `NeRFTrainer`.
 
-### 3. NeRF-to-Gaussian Bridge (NeRFToGaussianBridge)
+# 3. NeRF-to-Gaussian Bridge (NeRFToGaussianBridge)
 This module implements the transition between representations. By sampling the NeRF model's density field within a defined bounding box, it identifies high-probability surfaces to serve as the "initial seeds" for 3D Gaussians.
 
-### 4. Gaussian Optimization (HybridCoOptimizer)
+# 4. Gaussian Optimization (HybridCoOptimizer)
 Implements the "Densify and Prune" strategy to scale reconstruction to full rooms. Includes advanced rendering passes via `diff-gaussian-rasterization`.
 
-### 5. Desktop Controller (app_ui.py)
+# 5. Desktop Controller (app_ui.py)
 A native desktop widget built with PyQt6. This acts as the primary access point for the Gausfer pipeline, running heavy PyTorch and COLMAP computations in background threads keeping the UI highly responsive.
 
-### 6. Pipeline Feeder (data_capture_app.py)
+# 6. Pipeline Feeder (data_capture_app.py)
 A Streamlit web application for users to upload room walkthrough videos and automatically curate sharp frames based on blur variance.
 
-## Getting Started
+# Getting Started
 
-### Prerequisites
+# Prerequisites
 
 Python 3.8+
 PyTorch (CUDA supported)
 COLMAP installed and added to your system PATH.
 PyQt6 & Streamlit (for GUI tools)
 
-### Installation
+# Installation
 ```bash
 git clone https://github.com/Lunarmist-byte/gausfer
 cd gausfer
@@ -60,7 +60,7 @@ setup.bat #windows
 setup.sh  #linux
 ```
 
-### Windows Installation Troubleshooting
+# Windows Installation Troubleshooting
 
 If you get `ModuleNotFoundError: No module named 'diff_gaussian_rasterization'` or a crash with `[WinError 2] The system cannot find the file specified` when installing on Windows, it means PyTorch can't locate your C++ and CUDA compilers.
 
